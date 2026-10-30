@@ -1,0 +1,24 @@
+# Speech bubbles for any language. Sections: [random] [petted] [thrown] [grab] [free] [note] [window]
+[random]
+...
+?
+♪
+zzz
+♥
+[petted]
+♥
+♥♥♥
+☺
+[thrown]
+!!!
+?!
+[grab]
+!
+♪
+[free]
+...
+☹
+[note]
+!
+[window]
+!!!

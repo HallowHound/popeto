@@ -1,0 +1,31 @@
+# Speech bubbles. Lines under [section] are used for that moment.
+[random]
+Hi!
+Bored...
+What are you doing?
+Nice window.
+*yawn*
+Can I help?
+I see you.
+Ooh, a cursor!
+[petted]
+Hehe
+More!
+<3
+[thrown]
+Wheee!
+Hey!!
+Not again!
+[grab]
+Mine!
+Gotcha!
+Let's go this way.
+[free]
+Fine, take it.
+Spoilsport.
+[note]
+Delivery!
+Read it!
+[window]
+Bye bye window!
+Boing boing!
