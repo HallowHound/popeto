@@ -70,6 +70,8 @@ pub fn t(s: &'static str) -> &'static str {
         "Keep thrown windows on screen" => "Не выкидывать окна за экран",
         "Shake windows on hard landing" => "Трясти окно при жёстком приземлении",
         "Allow cloning" => "Разрешить клонирование",
+        "Only one of each pet" => "Только по одному каждого питомца",
+        "Only one of each pet (no duplicates)" => "Только по одному питомцу каждого вида (без повторов)",
         "Hide during fullscreen apps" => "Прятаться при полноэкранных приложениях",
         "Sounds" => "Звуки",
         "Size" => "Размер",

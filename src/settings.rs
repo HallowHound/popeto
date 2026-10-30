@@ -35,6 +35,8 @@ pub struct Settings {
     pub fs_show: Vec<String>,
     pub sounds: bool,
     pub cloning: bool,
+    /// At most one pet of each kind on screen.
+    pub unique_pets: bool,
     pub debug: bool,
     pub show_chooser: bool,
     /// No ini existed before this run.
@@ -65,6 +67,7 @@ impl Settings {
             fs_show: vec!["mstsc".into()],
             sounds: true,
             cloning: true,
+            unique_pets: false,
             debug: false,
             show_chooser: false,
             fresh: !path.exists(),
@@ -95,6 +98,7 @@ impl Settings {
                 "showoverfullscreen" => s.fs_show = v.split(',').map(|x| x.trim().trim_end_matches(".exe").to_lowercase()).filter(|x| !x.is_empty()).collect(),
                 "sounds" => s.sounds = b(v),
                 "cloning" => s.cloning = b(v),
+                "uniquepets" => s.unique_pets = b(v),
                 "debug" => s.debug = b(v),
                 "showpetchooser" => s.show_chooser = b(v),
                 "pranklevel" => s.pranks.level = match v.to_ascii_lowercase().as_str() { "calm" => 0, "chaos" => 2, _ => 1 },
@@ -145,6 +149,8 @@ impl Settings {
         o += &format!("ShowOverFullscreen={}\n", self.fs_show.join(","));
         o += &format!("Sounds={}\n", self.sounds);
         o += &format!("Cloning={}\n", self.cloning);
+        o += "; Only one pet of each kind (no duplicates)\n";
+        o += &format!("UniquePets={}\n", self.unique_pets);
         o += "; Windows pets ignore: exe names (without .exe) or parts of window titles, comma separated\n";
         o += &format!("IgnoreWindows={}\n\n", self.blacklist.join(","));
         let p = &self.pranks;

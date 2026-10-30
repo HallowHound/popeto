@@ -52,7 +52,7 @@ struct NmHdr { from: HWND, id: usize, code: u32 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum F {
-    Size, Filter, Opacity, MaxPets, Lang, Chooser, Sounds, Cloning,
+    Size, Filter, Opacity, MaxPets, Lang, Chooser, Sounds, Cloning, Unique,
     Interact, Throw, Keep, Shake, HideFs, FsShow, Ignore,
     Notes, Pictures, Prints, Cursor, Talk, Honk, Wins, Level, Panic,
 }
@@ -259,6 +259,7 @@ pub fn open(s: &Settings, icon: HICON) {
         b.check(t("Show the pet chooser every time Popeto starts"), F::Chooser, s.show_chooser);
         b.check(t("Play sounds that come with pets"), F::Sounds, s.sounds);
         b.check(t("Allow pets to clone themselves"), F::Cloning, s.cloning);
+        b.check(t("Only one of each pet (no duplicates)"), F::Unique, s.unique_pets);
         b.gap(10);
         let bw = px(sc, 200);
         b.button(t("Choose pets..."), CMD_CHOOSE, b.x0, bw);
@@ -349,6 +350,7 @@ pub fn read(base: &Settings) -> Option<Settings> {
             F::Chooser => s.show_chooser = on,
             F::Sounds => s.sounds = on,
             F::Cloning => s.cloning = on,
+            F::Unique => s.unique_pets = on,
             F::Interact => s.interact = on,
             F::Throw => s.throw_windows = on,
             F::Keep => s.keep_on_screen = on,

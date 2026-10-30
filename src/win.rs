@@ -407,7 +407,20 @@ pub fn move_window(h: HWND, x: i32, y: i32) {
     unsafe { SetWindowPos(h, null_mut(), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE); }
 }
 pub fn show(h: HWND, on: bool) { unsafe { ShowWindow(h, if on { SW_SHOWNOACTIVATE } else { SW_HIDE }); } }
-pub fn topmost(h: HWND) { unsafe { SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); } }
+/// Put our windows at the top of the always-on-top band in this exact order (first = topmost),
+/// in one atomic DeferWindowPos batch so the screen never shows them reshuffled in between.
+pub fn restack(top_to_bottom: &[HWND]) {
+    if top_to_bottom.is_empty() { return; }
+    unsafe {
+        let mut dw = BeginDeferWindowPos(top_to_bottom.len() as i32);
+        for (i, h) in top_to_bottom.iter().enumerate() {
+            if dw.is_null() { break; }
+            let after = if i == 0 { HWND_TOPMOST } else { top_to_bottom[i - 1] };
+            dw = DeferWindowPos(dw, *h, after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        }
+        if !dw.is_null() { EndDeferWindowPos(dw); }
+    }
+}
 pub fn capture(h: HWND) { unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::SetCapture(h); } }
 pub fn release_capture() { unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture(); } }
 

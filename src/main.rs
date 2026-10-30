@@ -100,6 +100,7 @@ const ID_SETTINGS: usize = 13;
 const ID_RANDOM: usize = 14;
 const ID_CLONING: usize = 15;
 const ID_ALL_CHASE: usize = 16;
+const ID_UNIQUE: usize = 24;
 const ID_CHASE: usize = 20;
 const ID_DISMISS: usize = 21;
 const ID_DISMISS_OTHERS: usize = 22;
@@ -228,6 +229,7 @@ impl App {
 
     fn spawn(&mut self, pack: usize, anchor: Option<(i32, i32)>, look_right: bool, behavior: Option<&str>) {
         if self.pets.len() >= self.settings.max_pets || self.world.monitors.is_empty() { return; }
+        if self.settings.unique_pets && self.pets.iter().any(|p| p.m.pack == pack) { return; }
         let anchor = anchor.unwrap_or_else(|| {
             let w = self.world.monitors[0].work;
             (w.l + 100 + (random() * (w.w() - 200).max(1) as f64) as i32, w.t - 128)
@@ -406,15 +408,20 @@ impl App {
     }
 
     fn summon_random(&mut self) {
-        if self.packs.is_empty() { return; }
-        let i = (random() * self.packs.len() as f64) as usize % self.packs.len();
+        let counts = self.counts();
+        // with unique pets, pick only among kinds that aren't on screen yet
+        let free: Vec<usize> = (0..self.packs.len()).filter(|&i| !self.settings.unique_pets || counts[i] == 0).collect();
+        if free.is_empty() { return; }
+        let i = free[(random() * free.len() as f64) as usize % free.len()];
         self.spawn(i, None, random() < 0.5, None);
     }
 
     fn tray_menu(&mut self) {
         let s = &self.settings;
         let summon = Menu::new();
-        for (i, p) in self.packs.iter().enumerate() { summon.item(ID_SUMMON + i, &p.name, false); }
+        let counts = self.counts();
+        // with unique pets, a tick marks kinds already on screen
+        for (i, p) in self.packs.iter().enumerate() { summon.item(ID_SUMMON + i, &p.name, s.unique_pets && counts[i] > 0); }
         summon.sep().item(ID_RANDOM, t("Random pet"), false);
         let opts = Menu::new();
         opts.item(ID_INTERACT, t("Play with windows"), s.interact)
@@ -422,6 +429,7 @@ impl App {
             .item(ID_KEEP, t("Keep thrown windows on screen"), s.keep_on_screen)
             .item(ID_SHAKE, t("Shake windows on hard landing"), s.shake)
             .item(ID_CLONING, t("Allow cloning"), s.cloning)
+            .item(ID_UNIQUE, t("Only one of each pet"), s.unique_pets)
             .item(ID_FULLSCREEN, t("Hide during fullscreen apps"), s.hide_fullscreen)
             .item(ID_SOUNDS, t("Sounds"), s.sounds);
         let size = Menu::new();
@@ -493,9 +501,9 @@ impl App {
             .item(ID_SETTINGS_WINDOW, t("Settings..."), false)
             .sub(t("Do something"), bm);
         if !toggles.is_empty() { m.sub(t("Allowed behaviours"), tm); }
-        m.sep()
-            .item(ID_ANOTHER, &tf("Another {}", &[&pack.name]), false)
-            .item(ID_RESTORE, t("Restore moved windows"), false)
+        m.sep();
+        if !self.settings.unique_pets { m.item(ID_ANOTHER, &tf("Another {}", &[&pack.name]), false); }
+        m.item(ID_RESTORE, t("Restore moved windows"), false)
             .sep()
             .item(ID_DISMISS, t("Dismiss"), false)
             .item(ID_DISMISS_OTHERS, t("Dismiss others"), false)
@@ -532,6 +540,11 @@ impl App {
             ID_KEEP => { s.keep_on_screen = !s.keep_on_screen; s.save(); }
             ID_SHAKE => { s.shake = !s.shake; s.save(); }
             ID_CLONING => { s.cloning = !s.cloning; s.save(); }
+            ID_UNIQUE => {
+                let mut n = self.settings.clone();
+                n.unique_pets = !n.unique_pets;
+                self.apply_settings(n);
+            }
             ID_FULLSCREEN => { s.hide_fullscreen = !s.hide_fullscreen; s.save(); }
             ID_SOUNDS => { s.sounds = !s.sounds; s.save(); }
             ID_PAUSE => self.paused = !self.paused,
@@ -620,7 +633,7 @@ impl App {
                 if vis != self.fs_visible {
                     self.fs_visible = vis;
                     self.refresh_monitors();
-                    for p in &self.pets { win::topmost(p.w.hwnd); }
+                    self.restack();
                 }
             }
         }
@@ -661,7 +674,7 @@ impl App {
         self.pranks_after();
         self.render();
         // fullscreen apps like RDP sit in the topmost band too, so re-assert often while one is up
-        if self.tick_n % if self.fs_visible.is_some() { 8 } else { 80 } == 0 { for p in &self.pets { win::topmost(p.w.hwnd); } }
+        if self.tick_n % if self.fs_visible.is_some() { 8 } else { 80 } == 0 { self.restack(); }
         if !self.log.is_empty() { self.flush_log(); }
     }
 
@@ -715,6 +728,36 @@ impl App {
         } else if old.opacity != s.opacity {
             for p in &mut self.pets { p.w.last = None; }
         }
+        self.trim_to_max();
+        if self.settings.unique_pets { self.dedupe(); }
+    }
+
+    /// Unique pets mode: keep the oldest pet of each kind, dismiss the rest.
+    fn dedupe(&mut self) {
+        let mut seen = HashSet::new();
+        let mut k = 0;
+        while k < self.pets.len() {
+            if seen.insert(self.pets[k].m.pack) { k += 1; } else { self.remove(k); }
+        }
+    }
+
+    /// Dismiss pets above MaxPets: newest first, and clones before the last pet of a kind.
+    fn trim_to_max(&mut self) {
+        while self.pets.len() > self.settings.max_pets.max(1) {
+            let counts = self.counts();
+            let i = (0..self.pets.len()).rev().find(|&i| counts[self.pets[i].m.pack] > 1).unwrap_or(self.pets.len() - 1);
+            self.remove(i);
+        }
+    }
+
+    /// Keep every Popeto window above other apps in a fixed order: bubbles/ball, pets (newest on top),
+    /// notes and footprints. Done atomically so overlapping pets never flicker between layers.
+    fn restack(&mut self) {
+        let (top, bottom) = self.pranks.layers();
+        let mut all = top;
+        all.extend(self.pets.iter().rev().map(|p| p.w.hwnd));
+        all.extend(bottom);
+        win::restack(&all);
     }
 
     /// Reload packs (e.g. after a size change) and put the same pets back where they were.

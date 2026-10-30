@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
-use windows_sys::Win32::UI::WindowsAndMessaging::{DestroyWindow, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, HWND_TOPMOST};
+use windows_sys::Win32::UI::WindowsAndMessaging::DestroyWindow;
 
 // ---------------------------------------------------------------- drawing
 
@@ -457,6 +457,8 @@ pub struct Pranks {
     next: [u64; 6],
     last_print: Vec<(u32, i32, i32)>,
     pub panic_hidden: bool,
+    /// Prank windows were added; re-stack all Popeto windows at the end of the tick.
+    pub restack: bool,
 }
 
 const ACT_RUN: [&str; 3] = ["Run", "Dash", "Walk"];
@@ -488,6 +490,15 @@ impl Pranks {
         if let Some(b) = self.ball.take() { b.ov.close(); }
     }
     pub fn counts(&self) -> (usize, usize) { (self.notes.len(), self.prints.len()) }
+    /// Prank windows that go above pets (bubbles, ball) and below them (notes, footprints).
+    pub fn layers(&self) -> (Vec<HWND>, Vec<HWND>) {
+        let mut top: Vec<HWND> = self.bubbles.iter().map(|b| b.ov.hwnd).collect();
+        top.extend(self.ball.as_ref().map(|b| b.ov.hwnd));
+        let mut bottom: Vec<HWND> = self.jobs.iter().filter_map(|j| if let Job::Bring { ov, .. } = j { Some(ov.hwnd) } else { None }).collect();
+        bottom.extend(self.notes.iter().rev().map(|n| n.hwnd));
+        bottom.extend(self.prints.iter().rev().map(|p| p.ov.hwnd));
+        (top, bottom)
+    }
 }
 
 impl Drop for Pranks { fn drop(&mut self) { self.clear(); } }
@@ -681,6 +692,7 @@ impl App {
         self.age_prints();
         self.step_ball();
         self.place_bubbles();
+        if std::mem::take(&mut self.pranks.restack) { self.restack(); }
     }
 
     fn step_jobs(&mut self) {
@@ -723,7 +735,7 @@ impl App {
                     ov.show(&self.painter, x, a.1 - ov.gfx.h + (6.0 * s) as i32, 255);
                     if finished || m.beh != "#prank-bring" || a.0 == dest {
                         self.pranks.notes.push(ov);
-                        for p in &self.pets { win::topmost(p.w.hwnd); }
+                        self.pranks.restack = true;
                     } else {
                         self.pranks.jobs.push(Job::Bring { pet, ov, dest });
                     }
@@ -769,7 +781,7 @@ impl App {
             let (w, h) = (ov.gfx.w, ov.gfx.h);
             ov.show(&self.painter, a.0 - w / 2, a.1 - h + (2.0 * s) as i32, 190);
             self.pranks.prints.push(Print { ov, age: 0 });
-            for p in &self.pets { win::topmost(p.w.hwnd); }
+            self.pranks.restack = true;
         }
         let ids: Vec<u32> = self.pets.iter().map(|p| p.m.id).collect();
         self.pranks.last_print.retain(|l| ids.contains(&l.0));
@@ -801,7 +813,7 @@ impl App {
             let x = (w.pos.0 + w.size.0 / 2 - b.ov.gfx.w / 2).clamp(mon.screen.l, mon.screen.r - b.ov.gfx.w);
             let y = (w.pos.1 + (10.0 * s) as i32 - b.ov.gfx.h).max(mon.screen.t);
             b.ov.show(&self.painter, x, y, 255);
-            if b.ticks == 1 { unsafe { SetWindowPos(b.ov.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); } }
+            if b.ticks == 1 { self.pranks.restack = true; }
             keep.push(b);
         }
         self.pranks.bubbles = keep;
