@@ -29,11 +29,21 @@ pub struct Win {
     pub prev: Rect,
 }
 
+/// What other pets can see of a pet: where it is and what it offers (Shimeji-ee affordances).
+pub struct PetInfo {
+    pub id: u32,
+    pub anchor: (i32, i32),
+    pub affordance: Option<String>,
+}
+
 #[derive(Default)]
 pub struct World {
     pub monitors: Vec<Monitor>,
     /// Interactive windows, topmost first.
     pub wins: Vec<Win>,
+    /// Pets' heads as tiny platforms other pets can stand on (hwnd = -pet id).
+    pub heads: Vec<Win>,
+    pub pets: Vec<PetInfo>,
     pub cursor: (i32, i32),
     pub cursor_d: (i32, i32),
     pub total: usize,
@@ -84,6 +94,9 @@ pub struct EnvView<'a> {
     pub screen: Area,
     pub ie: Area,
     pub count: usize,
+    /// The pet this view belongs to (so it doesn't stand on its own head).
+    pub self_id: u32,
+    ie_h: Option<isize>,
 }
 
 impl<'a> EnvView<'a> {
@@ -91,12 +104,26 @@ impl<'a> EnvView<'a> {
         let m = &world.monitors[mon.min(world.monitors.len() - 1)];
         let work = Area { r: m.work, visible: true, open: m.open, ..Default::default() };
         let screen = Area { r: m.screen, visible: true, open: m.open, ..Default::default() };
-        let mut v = EnvView { world, work, screen, ie: Area::default(), count };
+        let mut v = EnvView { world, work, screen, ie: Area::default(), count, self_id: 0, ie_h: None };
         v.bind_ie(ie);
         v
     }
 
     pub fn bind_ie(&mut self, ie: Option<isize>) {
+        self.ie_h = ie;
+        // another pet's head
+        if let Some(h) = ie.filter(|h| *h < 0 && *h != -(self.self_id as isize)) {
+            if let Some(w) = self.world.heads.iter().find(|w| w.hwnd == h) {
+                self.ie = Area {
+                    r: w.rect,
+                    d: Rect { l: w.rect.l - w.prev.l, t: w.rect.t - w.prev.t, r: w.rect.r - w.prev.r, b: w.rect.b - w.prev.b },
+                    visible: true,
+                    open: [false; 4],
+                    z: None,
+                };
+                return;
+            }
+        }
         self.ie = match ie.and_then(|h| self.world.win(h)) {
             Some(z) => {
                 let w = &self.world.wins[z];
@@ -112,7 +139,7 @@ impl<'a> EnvView<'a> {
         };
     }
 
-    pub fn ie_hwnd(&self) -> Option<isize> { self.ie.z.map(|z| self.world.wins[z].hwnd) }
+    pub fn ie_hwnd(&self) -> Option<isize> { if self.ie.visible { self.ie_h } else { None } }
 
     pub fn on(&self, a: &Area, s: Side, (x, y): (i32, i32)) -> bool {
         if !a.visible { return false; }
@@ -168,6 +195,11 @@ impl<'a> EnvView<'a> {
             self.bind_ie(Some(w.hwnd));
             return true;
         }
+        let me = -(self.self_id as isize);
+        if let Some(w) = world.heads.iter().find(|w| w.hwnd != me && w.rect.t == y && x >= w.rect.l && x <= w.rect.r) {
+            self.bind_ie(Some(w.hwnd));
+            return true;
+        }
         false
     }
 
@@ -213,6 +245,8 @@ pub enum Out {
     Sound(std::path::PathBuf),
     MoveWindow { hwnd: isize, l: i32, t: i32 },
     Shake(isize),
+    /// Switch a pet (`None` = this one) to a behaviour, optionally turning to face x.
+    SetBehavior { pet: Option<u32>, behavior: String, face_x: Option<i32> },
 }
 
 pub struct MState {

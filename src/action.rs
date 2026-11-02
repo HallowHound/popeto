@@ -29,6 +29,10 @@ enum K {
     Transform,
     SelfDestruct,
     Turn,
+    /// Shimeji-ee ScanMove: walk to a pet offering `Affordance`, then start behaviours on both.
+    ScanMove { target: Option<u32> },
+    /// Shimeji-ee Interact: play the animation, then switch to `Behavior`.
+    Interact,
 }
 
 pub struct Act {
@@ -82,7 +86,9 @@ impl Act {
                 "selfdestruct" => K::SelfDestruct,
                 "turn" => K::Turn,
                 "mute" | "setvariable" | "scaninteract" => K::Instant,
-                "interact" | "broadcast" | "scanmove" | "stay" => K::Stay,
+                "scanmove" => K::ScanMove { target: None },
+                "interact" => K::Interact,
+                "broadcast" | "stay" => K::Stay,
                 _ => if def.anims.is_empty() { K::Instant } else { K::Animate },
             },
             ActKind::Reference(_) => unreachable!(),
@@ -186,6 +192,12 @@ impl Act {
         }
     }
 
+    /// What this action offers to other pets' ScanMove (Shimeji-ee `Affordance`), if anything.
+    pub fn affordance(&self, m: &MState, env: &EnvView) -> Option<String> {
+        if matches!(self.k, K::ScanMove { .. }) { return None; }
+        self.var("Affordance", m, env).map(|v| v.as_str()).filter(|s| !s.is_empty())
+    }
+
     pub fn leaf(&self) -> &Act {
         match &self.k {
             K::Seq { ch, idx, .. } | K::Select { ch, idx } if *idx < ch.len() => ch[*idx].leaf(),
@@ -237,6 +249,15 @@ impl Act {
                 *regist_at = 250;
             }
             K::Turn => m.look_right = !m.look_right,
+            K::ScanMove { .. } => {
+                let want = self.vars.get("Affordance", m, env).map(|v| v.as_str()).unwrap_or_default();
+                let me = env.self_id;
+                let best = env.world.pets.iter()
+                    .filter(|p| p.id != me && !want.is_empty() && p.affordance.as_deref() == Some(want.as_str()) && (p.anchor.1 - m.anchor.1).abs() < 8)
+                    .min_by_key(|p| (p.anchor.0 - m.anchor.0).abs())
+                    .map(|p| p.id);
+                self.k = K::ScanMove { target: best };
+            }
             K::ThrowIe { pos, hwnd } => {
                 *pos = (env.ie.r.l as f64, env.ie.r.t as f64);
                 *hwnd = env.ie_hwnd();
@@ -289,7 +310,11 @@ impl Act {
         match &mut self.k {
             K::Seq { ch, idx, .. } | K::Select { ch, idx } => *idx < ch.len() && ch[*idx].has_next(m, env),
             K::Stay => self.anim(m, env).is_some(),
-            K::Animate | K::Breed | K::Transform | K::SelfDestruct | K::Turn | K::Regist => t < self.anim_total(m, env),
+            K::Animate | K::Breed | K::Transform | K::SelfDestruct | K::Turn | K::Regist | K::Interact => t < self.anim_total(m, env),
+            K::ScanMove { target } => {
+                let tid = *target;
+                self.anim(m, env).is_some() && tid.map(|id| env.world.pets.iter().any(|p| p.id == id)).unwrap_or(false)
+            }
             K::ThrowIe { hwnd, .. } => {
                 let alive = hwnd.map(|h| env.world.win(h).is_some()).unwrap_or(false);
                 alive && t < self.anim_total(m, env)
@@ -352,6 +377,29 @@ impl Act {
                 if matches!(self.k, K::WalkWithIe) { self.carry(m, env)?; }
             }
             K::Look | K::Offset | K::Instant => {}
+            K::ScanMove { target } => {
+                let Some(tid) = *target else { return Ok(()) };
+                self.bordered(m, env)?;
+                let Some(tx) = env.world.pets.iter().find(|p| p.id == tid).map(|p| p.anchor.0) else { return Ok(()) };
+                if m.anchor.0 != tx { m.look_right = m.anchor.0 < tx; }
+                self.play(m, env);
+                if (m.look_right && m.anchor.0 >= tx) || (!m.look_right && m.anchor.0 <= tx) || (m.anchor.0 - tx).abs() <= 2 {
+                    m.anchor.0 = tx;
+                    let s = |n: &str, m: &MState, env: &EnvView| self.var(n, m, env).map(|v| v.as_str()).filter(|s| !s.is_empty());
+                    if let Some(b) = s("Behavior", m, env) { m.out.push(Out::SetBehavior { pet: None, behavior: b, face_x: None }); }
+                    if let Some(b) = s("TargetBehavior", m, env) { m.out.push(Out::SetBehavior { pet: Some(tid), behavior: b, face_x: Some(m.anchor.0) }); }
+                    self.k = K::ScanMove { target: None };
+                }
+            }
+            K::Interact => {
+                self.bordered(m, env)?;
+                self.play(m, env);
+                if t == self.anim_total(m, env) - 1 {
+                    if let Some(b) = self.var("Behavior", m, env).map(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                        m.out.push(Out::SetBehavior { pet: None, behavior: b, face_x: None });
+                    }
+                }
+            }
             K::Fall { .. } => self.fall(m, env)?,
             K::Jump => {
                 let (tx, ty) = self.targets(m, env);

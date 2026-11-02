@@ -41,15 +41,58 @@ fn shimeji_roots(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Folders with a mobile-app pet (manifest.json + animation.json), searched a few levels down.
+fn mobile_roots(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
+    if crate::convert::is_mobile_pack(dir) { out.push(dir.to_path_buf()); return; }
+    if depth == 0 { return; }
+    for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+        if e.path().is_dir() { mobile_roots(&e.path(), depth - 1, out); }
+    }
+}
+
 /// "Kopa Cub Shimeji.zip" -> "Kopa Cub"
 fn nice_name(source: &Path) -> String {
     let stem = source.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-    let mut n = stem.replace(['_', '-'], " ");
-    for w in ["shimeji-ee", "shimeji ee", "shimeji", "shimejis", "mascot"] {
-        if let Some(i) = n.to_lowercase().find(w) { n.replace_range(i..i + w.len(), ""); }
+    let n = stem.replace(['_', '-'], " ");
+    let n: Vec<&str> = n.split_whitespace()
+        .filter(|w| !["shimeji", "shimejis", "shimejiee", "ee", "mascot", "download"].contains(&w.to_lowercase().as_str()))
+        .collect();
+    if n.is_empty() { "New pet".into() } else { n.join(" ") }
+}
+
+/// Pet names inside a zip if it looks like a Shimeji download (shime*.png images), else None.
+/// Only reads the zip's file list.
+pub fn peek_zip(zip: &Path) -> Option<Vec<String>> {
+    let f = fs::File::open(zip).ok()?;
+    let mut a = zip::ZipArchive::new(std::io::BufReader::new(f)).ok()?;
+    // mobile Shimeji app format: the name comes from manifest.json
+    let manifest = a.file_names().find(|n| n.replace('\\', "/").rsplit('/').next() == Some("manifest.json")).map(|s| s.to_string());
+    if let Some(m) = manifest {
+        if a.file_names().any(|n| n.ends_with("animation.json")) {
+            let mut text = String::new();
+            use std::io::Read;
+            a.by_name(&m).ok()?.take(1 << 16).read_to_string(&mut text).ok()?;
+            return Some(vec![crate::convert::manifest_name(&text).unwrap_or_else(|| nice_name(zip))]);
+        }
     }
-    let n = n.split_whitespace().collect::<Vec<_>>().join(" ");
-    if n.is_empty() { "New pet".into() } else { n }
+    let mut pets: Vec<String> = Vec::new();
+    let mut shime = false;
+    for name in a.file_names() {
+        let n = name.replace('\\', "/");
+        if !n.to_lowercase().ends_with(".png") { continue; }
+        if n.rsplit('/').next().map(|f| f.to_lowercase().starts_with("shime")).unwrap_or(false) { shime = true; }
+        let parts: Vec<&str> = n.split('/').collect();
+        if let Some(i) = parts.iter().position(|p| p.eq_ignore_ascii_case("img")) {
+            if parts.len() > i + 2 {
+                let pet = parts[i + 1];
+                if !pet.eq_ignore_ascii_case("unused") && !pets.iter().any(|p| p == pet) { pets.push(pet.to_string()); }
+            }
+        }
+    }
+    if !shime { return None; }
+    let label = nice_name(zip);
+    let names: Vec<String> = pets.into_iter().map(|p| if p.eq_ignore_ascii_case("shimeji") { label.clone() } else { p }).collect();
+    Some(if names.is_empty() { vec![label] } else { names })
 }
 
 fn free_name(img: &Path, base: &str) -> String {
@@ -123,7 +166,7 @@ pub fn import(source: &Path, popeto_root: &Path) -> Report {
         // a file inside the download (Shimeji-ee.jar, a png...): use the nearest folder that looks like Shimeji
         let mut d = source.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         for _ in 0..3 {
-            if child_dir(&d, "img").is_some() || has_png(&d) { break; }
+            if child_dir(&d, "img").is_some() || has_png(&d) || crate::convert::is_mobile_pack(&d) { break; }
             match d.parent() { Some(p) => d = p.to_path_buf(), None => break }
         }
         d
@@ -132,9 +175,23 @@ pub fn import(source: &Path, popeto_root: &Path) -> Report {
     };
     let label = nice_name(if is_zip || source.is_dir() { source } else { &base });
 
+    // pets in the mobile Shimeji app format (shimeji.org): convert to a regular pet
+    let mut mobile = Vec::new();
+    mobile_roots(&base, 3, &mut mobile);
+    for m in &mobile {
+        let name = fs::read_to_string(m.join("manifest.json")).ok().and_then(|t| crate::convert::manifest_name(&t)).unwrap_or(label.clone());
+        let name = free_name(&img, &name.replace(['\\', '/', ':', '*', '?', '"', '<', '>', '|'], " "));
+        let dest = img.join(&name);
+        let res = crate::convert::convert(m, &dest).and_then(|_| crate::config::load_pack(popeto_root, &dest, 1.0).map(|_| ()));
+        match res {
+            Ok(()) => rep.added.push(name),
+            Err(e) => { let _ = fs::remove_dir_all(&dest); rep.failed.push(format!("{name}: {e}")); }
+        }
+    }
+
     let mut roots = Vec::new();
     shimeji_roots(&base, 3, &mut roots);
-    if roots.is_empty() && has_png(&base) {
+    if roots.is_empty() && mobile.is_empty() && has_png(&base) {
         // a single pet folder: images (+ maybe conf) directly inside
         let parent_conf = base.parent().and_then(|p| child_dir(p, "conf"));
         let name = base.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(label.clone());

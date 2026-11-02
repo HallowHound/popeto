@@ -66,3 +66,57 @@ Boing boing!
 That window was in my way.
 Oops.
 Much better.
+[meet]
+Hi!
+Oh, you're here too!
+How are you?
+Long time no see!
+Hey, neighbour!
+Wanna walk together?
+[tag]
+Catch me!
+You're it!
+Can't catch me!
+Tag!
+[follow]
+Follow me!
+Choo choo!
+Everyone, this way!
+[sleep]
+Nap time...
+You left? Then I'll sleep.
+Good night...
+[wake]
+You're back!
+I wasn't sleeping!
+Good morning!
+Hi again!
+[morning]
+Good morning!
+Rise and shine!
+Had your coffee yet?
+[lunch]
+Lunch time!
+Time to eat!
+Did you have lunch?
+[night]
+It's late, time for bed.
+Good night!
+It's night already...
+[food]
+Nom!
+Cookie!
+Mine!
+Yummy!
+[fetch]
+Got it!
+Here you go!
+Again?
+[balloon]
+Got it!
+Pop!
+Balloon!
+[push]
+Move over!
+Pushing!
+This window is in the way.

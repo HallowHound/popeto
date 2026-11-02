@@ -4,9 +4,12 @@
 mod action;
 mod chooser;
 mod config;
+mod convert;
+mod downloads;
 mod env;
 mod expr;
 mod importer;
+mod life;
 mod i18n;
 mod mascot;
 mod online;
@@ -83,6 +86,10 @@ struct App {
     quit: bool,
     pranks: pranks::Pranks,
     online: online::Online,
+    downloads: downloads::Watcher,
+    life: life::Life,
+    /// Shimeji zips found in Downloads, waiting for the user to add them.
+    pending: Vec<(std::path::PathBuf, Vec<String>)>,
 }
 
 // menu ids
@@ -109,6 +116,10 @@ const ID_DISMISS_OTHERS: usize = 22;
 const ID_ANOTHER: usize = 23;
 const ID_CHOOSE: usize = 17;
 const ID_SETTINGS_WINDOW: usize = 18;
+const ID_TOY_COOKIE: usize = 65;
+const ID_TOY_BALLOON: usize = 66;
+const ID_TOY_BED: usize = 67;
+const ID_TOY_CLEAR: usize = 68;
 const ID_ADD_PETS: usize = 19;
 const ID_PRANK_LEVEL: usize = 40;
 const ID_PRANK_TOGGLE: usize = 50;
@@ -123,6 +134,9 @@ const ID_OPACITY: usize = 80;
 const SIZES: [(f64, &str); 7] = [(0.0, "Auto (Windows display scaling)"), (0.5, "50%"), (0.75, "75%"), (1.0, "100%"), (1.25, "125%"), (1.5, "150%"), (2.0, "200%")];
 const OPACITIES: [f64; 4] = [1.0, 0.9, 0.75, 0.5];
 const ID_SUMMON: usize = 1000;
+/// Tray "Get more pets" links (settings_ui::SITES).
+const ID_LINK: usize = 4000;
+const ID_PENDING: usize = 4100;
 
 fn scale_for(s: &Settings) -> f64 {
     if s.scaling > 0.0 { s.scaling } else { unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForSystem() as f64 / 96.0 } }
@@ -165,6 +179,9 @@ impl App {
             quit: false,
             pranks: prank_state,
             online: online::Online::start(),
+            downloads: downloads::Watcher::new(),
+            life: life::Life::default(),
+            pending: vec![],
         }
     }
 
@@ -245,6 +262,7 @@ impl App {
         let p = &self.packs[pack];
         let disabled = self.settings.disabled.get(&p.name).unwrap_or(&self.empty);
         let mut env = EnvView::new(&self.world, m.st.monitor, None, count);
+        env.self_id = m.id;
         let b = behavior.map(|s| s.to_string()).unwrap_or_else(|| p.required("Fall"));
         m.set_behavior(p, &b, &mut env, disabled, &mut self.log);
         let hwnd = win::create_pet_window();
@@ -309,6 +327,7 @@ impl App {
         let disabled = self.settings.disabled.get(&pack.name).unwrap_or(&self.empty);
         pet.m.st.monitor = self.world.monitor_for(pet.m.st.monitor, pet.m.st.anchor.0, pet.m.st.anchor.1);
         let mut env = EnvView::new(&self.world, pet.m.st.monitor, pet.m.st.ie, counts[pet.m.pack]);
+        env.self_id = pet.m.id;
         f(&mut pet.m, pack, &mut env, disabled, &mut self.log)
     }
 
@@ -347,6 +366,7 @@ impl App {
     fn on_event(&mut self, e: Ev) {
         match e {
             Ev::Press(h, x, y) => {
+                if self.toy_press(h) { return; }
                 if self.pranks.is_ball(h) { self.grab_ball(true); return; }
                 let Some(i) = self.find(h) else { return };
                 if self.paused { return; }
@@ -360,6 +380,7 @@ impl App {
                         win::capture(h as HWND);
                         let id = m.id;
                         self.say(id, "petted");
+                        self.emote(id, life::Emote::Heart);
                     }
                     _ => {
                         let drag = self.with_pet(i, |m, _, env, _, _| m.current(env).map(|c| c.1).unwrap_or(true));
@@ -372,6 +393,7 @@ impl App {
                 }
             }
             Ev::Release(h) => {
+                if self.toy_release(h) { return; }
                 if self.pranks.is_ball(h) { if self.pranks.ball.as_ref().map(|b| b.dragging).unwrap_or(false) { self.grab_ball(false); } return; }
                 let Some(i) = self.find(h) else { return };
                 let m = &mut self.pets[i].m;
@@ -382,13 +404,14 @@ impl App {
                     let id = m.id;
                     self.set_behavior(i, "Thrown");
                     let d = self.world.cursor_d;
-                    if d.0.abs() + d.1.abs() > 25 { self.say(id, "thrown"); }
+                    if d.0.abs() + d.1.abs() > 25 { self.say(id, "thrown"); self.emote(id, life::Emote::Bang); }
                 } else if holding && hb {
                     self.with_pet(i, |m, pack, env, dis, log| m.next_after_hotspot(pack, env, dis, log));
                 }
                 if dragging || holding { win::release_capture(); }
             }
             Ev::RClick(h) => {
+                if self.remove_toy(h) { return; }
                 if self.pranks.is_ball(h) { self.remove_ball(); return; }
                 if let Some(i) = self.find(h) { self.pet_menu(i); }
             }
@@ -403,6 +426,7 @@ impl App {
             Ev::Tray(msg) => match msg {
                 win::MSG_RUP | win::MSG_CTX => self.tray_menu(),
                 win::MSG_LDBL => self.summon_random(),
+                win::MSG_BALLOON_CLICK => if !self.pending.is_empty() { let (p, _) = self.pending.remove(0); self.import_from(&p); },
                 _ => {}
             },
             Ev::TaskbarCreated => win::tray(self.tray, self.icon, win::TRAY_ADD),
@@ -464,17 +488,33 @@ impl App {
             .item(ID_PRANK_FOLDER, t("Open pranks folder"), false)
             .sep()
             .disabled(&tf("Panic key: {}", &[&s.panic_key]));
+        let toys = Menu::new();
+        toys.item(ID_TOY_COOKIE, t("Drop a cookie"), false)
+            .item(if self.pranks.ball.is_some() { ID_BALL_REMOVE } else { ID_BALL }, if self.pranks.ball.is_some() { t("Take the ball away") } else { t("Throw a ball") }, false)
+            .item(ID_TOY_BALLOON, t("Release a balloon"), false)
+            .item(ID_TOY_BED, t("Bed"), self.life.has_bed())
+            .sep()
+            .item(ID_TOY_CLEAR, t("Remove all toys"), false);
+        let links = Menu::new();
+        for (k, (name, _, _)) in settings_ui::SITES.iter().enumerate() { links.item(ID_LINK + k, name, false); }
         let m = Menu::new();
-        m.disabled(&tf("Popeto - {} pet(s)", &[&self.pets.len()])).sep()
+        m.disabled(&tf("Popeto - {} pet(s)", &[&self.pets.len()])).sep();
+        for (k, (_, names)) in self.pending.iter().enumerate() {
+            m.item(ID_PENDING + k, &tf("Add downloaded pet: {}", &[&names.join(", ")]), false);
+        }
+        if !self.pending.is_empty() { m.sep(); }
+        m
             .item(ID_SETTINGS_WINDOW, t("Settings..."), false)
             .item(ID_CHOOSE, t("Choose pets..."), false)
             .item(ID_ADD_PETS, t("Add pets from Shimeji zip..."), false)
+            .sub(t("Get more pets"), links)
             .sub(t("Summon"), summon)
             .item(ID_ALL_CHASE, t("Everyone: follow cursor"), false)
             .item(ID_RESTORE, &tf("Restore moved windows ({})", &[&self.originals.len()]), false)
             .item(ID_DISMISS_ALL, t("Dismiss all"), false)
             .item(ID_PAUSE, t("Pause"), self.paused)
             .sep()
+            .sub(t("Toys"), toys)
             .sub(t("Pranks"), pr)
             .sub(t("Options"), opts)
             .item(ID_FOLDER, t("Open pets folder"), false)
@@ -555,6 +595,11 @@ impl App {
             ID_FOLDER => win::open(&self.root.join("img")),
             ID_SETTINGS => win::open(&self.settings.path),
             ID_SETTINGS_WINDOW => settings_ui::open(&self.settings, self.icon),
+            _ if (ID_LINK..ID_LINK + settings_ui::SITES.len()).contains(&id) => win::open_url(settings_ui::SITES[id - ID_LINK].1),
+            _ if (ID_PENDING..ID_PENDING + self.pending.len()).contains(&id) => {
+                let (p, _) = self.pending.remove(id - ID_PENDING);
+                self.import_from(&p);
+            }
             ID_ADD_PETS => {
                 let pick = win::open_file(self.tray, t("Choose a Shimeji zip, or any file inside an unpacked Shimeji folder"),
                     &[(t("Shimeji pets (zip, Shimeji-ee.jar, png)"), "*.zip;*.jar;*.png"), (t("All files"), "*.*")]);
@@ -570,6 +615,10 @@ impl App {
                 self.prank_now(None);
             }
             ID_BALL => self.throw_ball(),
+            ID_TOY_COOKIE => self.drop_toy(life::ToyKind::Cookie),
+            ID_TOY_BALLOON => self.drop_toy(life::ToyKind::Balloon),
+            ID_TOY_BED => self.drop_toy(life::ToyKind::Bed),
+            ID_TOY_CLEAR => { self.clear_toys(); self.remove_ball(); }
             ID_BALL_REMOVE => self.remove_ball(),
             ID_PRANK_CLEAR => self.pranks.clear(),
             ID_PRANK_FOLDER => { let d = pranks::ensure_files(&self.root); win::open(&d); }
@@ -650,11 +699,19 @@ impl App {
             for p in &self.pets { d += &format!(" | {} {} at {:?} ie={:?}", self.packs[p.m.pack].name, p.m.beh, p.m.st.anchor, p.m.st.ie.is_some()); }
             self.log.push(d);
         }
+        if self.settings.watch_downloads && self.tick_n % 120 == 60 {
+            for (p, names) in self.downloads.poll() {
+                if self.pending.iter().any(|(q, _)| *q == p) { continue; }
+                win::tray_balloon(self.tray, "Popeto", &tf("New pet in Downloads: {}. Click here to add it.", &[&names.join(", ")]));
+                self.pending.push((p, names));
+            }
+        }
         if self.settings.debug {
             if let Some(e) = self.online.take_error() { self.log.push(format!("[online t={}] {e}", self.tick_n)); }
         }
         if self.paused { return; }
 
+        self.life_before();
         let mut outs: Vec<(u32, Out)> = Vec::new();
         for i in 0..self.pets.len() {
             let mon = self.pets[i].m.st.monitor;
@@ -680,6 +737,7 @@ impl App {
         }
         self.apply(outs);
         self.pranks_after();
+        self.life_after();
         self.render();
         // fullscreen apps like RDP sit in the topmost band too, so re-assert often while one is up
         if self.tick_n % if self.fs_visible.is_some() { 8 } else { 80 } == 0 { self.restack(); }
@@ -694,6 +752,7 @@ impl App {
 
     /// Import pets from a Shimeji download, then drop one of each new pet on screen.
     fn import_from(&mut self, src: &std::path::Path) {
+        self.pending.retain(|(p, _)| p != src);
         let rep = importer::import(src, &self.root);
         if !rep.added.is_empty() {
             let want = self.settings.start_pets.trim().to_string();
@@ -771,9 +830,12 @@ impl App {
     /// notes and footprints. Done atomically so overlapping pets never flicker between layers.
     fn restack(&mut self) {
         let (top, bottom) = self.pranks.layers();
+        let (ltop, lbottom) = self.life.layers();
         let mut all = top;
-        all.extend(self.pets.iter().rev().map(|p| p.w.hwnd));
+        all.extend(ltop);
+        all.extend(self.pets.iter().rev().filter(|p| !self.life.hidden.contains_key(&p.m.id)).map(|p| p.w.hwnd));
         all.extend(bottom);
+        all.extend(lbottom);
         win::restack(&all);
     }
 
@@ -810,8 +872,14 @@ impl App {
                 }
                 Out::Remove => if let Some(i) = idx { self.remove(i); },
                 Out::Sound(p) => if self.settings.sounds { win::play_sound(&p); },
+                Out::SetBehavior { pet, behavior, face_x } => {
+                    let Some(i) = pet.map(|p| self.pets.iter().position(|x| x.m.id == p)).unwrap_or(idx) else { continue };
+                    if let Some(fx) = face_x { self.pets[i].m.st.look_right = self.pets[i].m.st.anchor.0 < fx; }
+                    if self.packs[self.pets[i].m.pack].behavior(&behavior).is_some() { self.set_behavior(i, &behavior); }
+                }
                 Out::MoveWindow { hwnd, l, t } => {
-                    if !self.settings.throw_windows { continue; }
+                    // negative handles are pets' heads (stacking), not windows
+                    if !self.settings.throw_windows || hwnd < 0 { continue; }
                     let (mut l, mut t) = (l, t);
                     if self.settings.keep_on_screen {
                         let u = self.screen_union();

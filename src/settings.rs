@@ -19,6 +19,27 @@ pub struct Pranks {
     pub windows: bool,
 }
 
+/// Things pets do on their own: with each other, with windows and with you.
+#[derive(Clone)]
+pub struct Life {
+    pub stacking: bool,
+    pub meet: bool,
+    pub games: bool,
+    pub hide: bool,
+    pub push: bool,
+    pub sleep: bool,
+    pub sleep_minutes: u32,
+    pub daytime: bool,
+    pub emotes: bool,
+    pub talk: bool,
+}
+
+impl Default for Life {
+    fn default() -> Self {
+        Life { stacking: true, meet: true, games: true, hide: true, push: false, sleep: true, sleep_minutes: 5, daytime: true, emotes: true, talk: true }
+    }
+}
+
 #[derive(Clone)]
 pub struct Settings {
     pub path: PathBuf,
@@ -39,6 +60,8 @@ pub struct Settings {
     pub cloning: bool,
     /// At most one pet of each kind on screen.
     pub unique_pets: bool,
+    /// Offer to import Shimeji zips that appear in the Downloads folder.
+    pub watch_downloads: bool,
     pub debug: bool,
     pub show_chooser: bool,
     /// No ini existed before this run.
@@ -46,6 +69,7 @@ pub struct Settings {
     pub blacklist: Vec<String>,
     pub disabled: HashMap<String, HashSet<String>>,
     pub pranks: Pranks,
+    pub life: Life,
     /// Hotkey that sends pets away / brings them back, e.g. Ctrl+Shift+F12.
     pub panic_key: String,
     /// Interface and prank-text language: "auto" or a code like "en", "ru".
@@ -70,12 +94,14 @@ impl Settings {
             sounds: true,
             cloning: true,
             unique_pets: false,
+            watch_downloads: true,
             debug: false,
             show_chooser: false,
             fresh: !path.exists(),
             blacklist: vec!["bongocat".into()],
             disabled: HashMap::new(),
             pranks: Pranks { level: 1, ..Default::default() },
+            life: Life::default(),
             panic_key: "Ctrl+Shift+F12".into(),
             language: "auto".into(),
         };
@@ -101,6 +127,7 @@ impl Settings {
                 "sounds" => s.sounds = b(v),
                 "cloning" => s.cloning = b(v),
                 "uniquepets" => s.unique_pets = b(v),
+                "watchdownloads" => s.watch_downloads = b(v),
                 "debug" => s.debug = b(v),
                 "showpetchooser" => s.show_chooser = b(v),
                 "pranklevel" => s.pranks.level = match v.to_ascii_lowercase().as_str() { "calm" => 0, "chaos" => 2, _ => 1 },
@@ -113,6 +140,16 @@ impl Settings {
                 "prankhonk" => s.pranks.honk = b(v),
                 "prankwindows" => s.pranks.windows = b(v),
                 "panickey" => s.panic_key = v.to_string(),
+                "lifestacking" => s.life.stacking = b(v),
+                "lifemeet" => s.life.meet = b(v),
+                "lifegames" => s.life.games = b(v),
+                "lifehide" => s.life.hide = b(v),
+                "lifepushwindows" => s.life.push = b(v),
+                "lifesleepwhenaway" => s.life.sleep = b(v),
+                "lifesleepminutes" => s.life.sleep_minutes = v.parse().unwrap_or(5).clamp(1, 240),
+                "lifetimeofday" => s.life.daytime = b(v),
+                "lifeemotes" => s.life.emotes = b(v),
+                "lifetalk" => s.life.talk = b(v),
                 "language" => s.language = v.to_lowercase(),
                 "ignorewindows" => s.blacklist = v.split(',').map(|x| x.trim().to_lowercase()).filter(|x| !x.is_empty()).collect(),
                 _ => {
@@ -154,6 +191,8 @@ impl Settings {
         o += &format!("Cloning={}\n", self.cloning);
         o += "; Only one pet of each kind (no duplicates)\n";
         o += &format!("UniquePets={}\n", self.unique_pets);
+        o += "; Offer to add Shimeji zips that appear in the Downloads folder\n";
+        o += &format!("WatchDownloads={}\n", self.watch_downloads);
         o += "; Windows pets ignore: exe names (without .exe) or parts of window titles, comma separated\n";
         o += &format!("IgnoreWindows={}\n\n", self.blacklist.join(","));
         let p = &self.pranks;
@@ -163,6 +202,11 @@ impl Settings {
             p.notes, p.memes, p.footprints, p.cursor, p.talk, p.honk, p.windows);
         o += "; Pictures prank also brings fresh pictures from the internet (sources: pranks\\*\\online.txt)\n";
         o += &format!("PrankOnlinePictures={}\n", p.online);
+        let l = &self.life;
+        o += "; Life: pets stand on each other, greet, play tag/follow, hide behind windows, push windows,\n";
+        o += "; sleep when you are away (minutes), react to the time of day, show hearts/stars, talk\n";
+        o += &format!("LifeStacking={}\nLifeMeet={}\nLifeGames={}\nLifeHide={}\nLifePushWindows={}\nLifeSleepWhenAway={}\nLifeSleepMinutes={}\nLifeTimeOfDay={}\nLifeEmotes={}\nLifeTalk={}\n",
+            l.stacking, l.meet, l.games, l.hide, l.push, l.sleep, l.sleep_minutes, l.daytime, l.emotes, l.talk);
         o += "; Hotkey that hides all pets and stops pranks (press again to bring them back)\n";
         o += &format!("PanicKey={}\n\n", self.panic_key);
         o += "; Behaviours switched off per pet (right click a pet > Allowed behaviours)\n";

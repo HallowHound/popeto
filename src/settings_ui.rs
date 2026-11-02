@@ -1,4 +1,4 @@
-//! Settings window: tabs for General, Windows and Pranks. Modeless, so pets keep playing while it's open.
+//! Settings window: tabs for General, Pets, Life, Windows and Pranks. Modeless, so pets keep playing while it's open.
 //! The window only edits controls; OK / Apply push an event and the app reads the values back.
 
 use crate::i18n::{self, t, tf};
@@ -9,7 +9,7 @@ use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::Controls::{InitCommonControlsEx, ICC_TAB_CLASSES, INITCOMMONCONTROLSEX};
+use windows_sys::Win32::UI::Controls::{InitCommonControlsEx, ICC_LINK_CLASS, ICC_TAB_CLASSES, INITCOMMONCONTROLSEX};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 pub const SIZES: [(f64, &str); 10] = [
@@ -27,8 +27,21 @@ const ID_APPLY: usize = 3;
 pub const CMD_PETS_FOLDER: usize = 11;
 pub const CMD_CHOOSE: usize = 17;
 pub const CMD_ADD_PETS: usize = 19;
+
+/// Where to find pets: (name, address, description). Shown on the Pets tab and in the tray menu.
+pub const SITES: [(&str, &str, &str); 5] = [
+    ("shimeji.org", "https://shimeji.org/", "Big community library, no account needed. Popeto converts its pets automatically."),
+    ("Cachomon", "https://cachomon.com/grid.php?g=1", "Hundreds of Pokemon and other characters. Download via an ad page or Patreon."),
+    ("Kilkakon", "https://kilkakon.com/shimeji", "Home of Shimeji-ee and its official pets."),
+    ("Reddit r/shimeji", "https://www.reddit.com/r/shimeji/", "Community: new pets, requests and help."),
+    ("DeviantArt", "https://www.deviantart.com/search?q=shimeji", "The most pets of all; downloading needs a free account."),
+];
 pub const CMD_PRANKS_FOLDER: usize = 64;
 pub const CMD_BALL: usize = 61;
+pub const CMD_COOKIE: usize = 65;
+pub const CMD_BALLOON: usize = 66;
+pub const CMD_BED: usize = 67;
+pub const CMD_TOYS_CLEAR: usize = 68;
 
 // raw control constants (kept local; they are stable Win32 values)
 const BS_AUTOCHECKBOX: u32 = 3;
@@ -49,10 +62,14 @@ const TCN_SELCHANGE: u32 = (-551i32) as u32;
 struct TcItem { mask: u32, state: u32, state_mask: u32, text: *mut u16, max: i32, image: i32, lparam: isize }
 #[repr(C)]
 struct NmHdr { from: HWND, id: usize, code: u32 }
+/// NMLINK (SysLink click): header + LITEM.
+#[repr(C)]
+struct NmLink { hdr: NmHdr, mask: u32, link: i32, state: u32, state_mask: u32, id: [u16; 48], url: [u16; 2084] }
 
 #[derive(Clone, Copy, PartialEq)]
 enum F {
-    Size, Filter, Opacity, MaxPets, Lang, Chooser, Sounds, Cloning, Unique,
+    Size, Filter, Opacity, MaxPets, Lang, Chooser, Sounds, Cloning, Unique, Watch,
+    LStack, LMeet, LGames, LHide, LPush, LSleep, LSleepMin, LDay, LEmotes, LTalk,
     Interact, Throw, Keep, Shake, HideFs, FsShow, Ignore,
     Notes, Pictures, Online, Prints, Cursor, Talk, Honk, Wins, Level, Panic,
 }
@@ -80,7 +97,7 @@ unsafe extern "system" fn proc_(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
                 ID_OK => push(Ev::SettingsApply(true)),
                 ID_APPLY => push(Ev::SettingsApply(false)),
                 ID_CANCEL => { close(); }
-                CMD_PETS_FOLDER | CMD_CHOOSE | CMD_ADD_PETS | CMD_PRANKS_FOLDER | CMD_BALL => push(Ev::Command(id)),
+                CMD_PETS_FOLDER | CMD_CHOOSE | CMD_ADD_PETS | CMD_PRANKS_FOLDER | CMD_BALL | CMD_COOKIE | CMD_BALLOON | CMD_BED | CMD_TOYS_CLEAR => push(Ev::Command(id)),
                 _ => {}
             }
             return 0;
@@ -88,6 +105,12 @@ unsafe extern "system" fn proc_(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
         WM_NOTIFY => {
             let n = &*(lp as *const NmHdr);
             if n.code == TCN_SELCHANGE { show_page(SendMessageW(n.from, TCM_GETCURSEL, 0, 0) as usize); }
+            // NM_CLICK / NM_RETURN from a site link: open its address in the browser
+            if n.code == (-2i32) as u32 || n.code == (-4i32) as u32 {
+                let l = &*(lp as *const NmLink);
+                let end = l.url.iter().position(|c| *c == 0).unwrap_or(0);
+                if end > 0 { win::open_url(&String::from_utf16_lossy(&l.url[..end])); }
+            }
             return 0;
         }
         WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
@@ -95,6 +118,7 @@ unsafe extern "system" fn proc_(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
             return GetSysColorBrush(COLOR_WINDOW) as LRESULT;
         }
         WM_CLOSE => { close(); return 0; }
+        WM_DROPFILES => { if let Some(p) = win::dropped_file(wp) { push(Ev::Import(p)); } return 0; }
         _ => {}
     }
     DefWindowProcW(h, msg, wp, lp)
@@ -127,7 +151,7 @@ pub fn close() -> bool {
 
 fn register() {
     unsafe {
-        let icc = INITCOMMONCONTROLSEX { dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32, dwICC: ICC_TAB_CLASSES };
+        let icc = INITCOMMONCONTROLSEX { dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32, dwICC: ICC_TAB_CLASSES | ICC_LINK_CLASS };
         InitCommonControlsEx(&icc);
         let cls = wide(CLASS);
         let wc = WNDCLASSEXW {
@@ -197,6 +221,12 @@ impl Builder {
         let y = self.y;
         self.make("BUTTON", text, WS_TABSTOP, x, y, w, px(self.s, 28), id, None);
     }
+    /// SysLink control: `<a href="...">name</a>` markup, opens in the browser when clicked.
+    unsafe fn link(&mut self, markup: &str, lines: i32) {
+        let (x, y, w) = (self.x0, self.y, self.w);
+        self.make("SysLink", markup, WS_TABSTOP, x, y, w, px(self.s, 18) * lines + px(self.s, 2), 0, None);
+        self.y += px(self.s, 18) * lines + px(self.s, 8);
+    }
     fn gap(&mut self, v: i32) { self.y += px(self.s, v); }
     fn finish_page(&mut self, top: i32) -> Vec<HWND> { self.y = top; std::mem::take(&mut self.page) }
 }
@@ -213,7 +243,7 @@ pub fn open(s: &Settings, icon: HICON) {
     register();
     unsafe {
         let sc = windows_sys::Win32::UI::HiDpi::GetDpiForSystem() as f64 / 96.0;
-        let (cw, ch) = (px(sc, 540), px(sc, 520));
+        let (cw, ch) = (px(sc, 560), px(sc, 560));
         let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
         let mut r = RECT { left: 0, top: 0, right: cw, bottom: ch };
         AdjustWindowRectEx(&mut r, style, 0, 0);
@@ -222,7 +252,7 @@ pub fn open(s: &Settings, icon: HICON) {
         SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut work as *mut _ as *mut _, 0);
         let (x, y) = (work.left + (work.right - work.left - ww) / 2, work.top + (work.bottom - work.top - wh) / 2);
         let (cls, title) = (wide(CLASS), wide(t("Popeto settings")));
-        let hwnd = CreateWindowExW(WS_EX_APPWINDOW, cls.as_ptr(), title.as_ptr(), style, x, y, ww, wh, null_mut(), null_mut(), GetModuleHandleW(null()), null());
+        let hwnd = CreateWindowExW(WS_EX_APPWINDOW | WS_EX_ACCEPTFILES, cls.as_ptr(), title.as_ptr(), style, x, y, ww, wh, null_mut(), null_mut(), GetModuleHandleW(null()), null());
         if !icon.is_null() {
             SendMessageW(hwnd, WM_SETICON, ICON_BIG as WPARAM, icon as LPARAM);
             SendMessageW(hwnd, WM_SETICON, ICON_SMALL as WPARAM, icon as LPARAM);
@@ -236,7 +266,7 @@ pub fn open(s: &Settings, icon: HICON) {
         let tab_cls = wide("SysTabControl32");
         let tab = CreateWindowExW(0, tab_cls.as_ptr(), null(), WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP, m, m, cw - 2 * m, tab_h, hwnd, null_mut(), GetModuleHandleW(null()), null());
         SendMessageW(tab, WM_SETFONT, font as WPARAM, 1);
-        for (i, name) in ["General", "Windows", "Pranks"].iter().enumerate() {
+        for (i, name) in ["General", "Pets", "Life", "Windows", "Pranks"].iter().enumerate() {
             let mut tx = wide(t(name));
             let item = TcItem { mask: 1, state: 0, state_mask: 0, text: tx.as_mut_ptr(), max: 0, image: 0, lparam: 0 };
             SendMessageW(tab, TCM_INSERTITEMW, i, &item as *const _ as LPARAM);
@@ -261,14 +291,45 @@ pub fn open(s: &Settings, icon: HICON) {
         b.check(t("Allow pets to clone themselves"), F::Cloning, s.cloning);
         b.check(t("Only one of each pet (no duplicates)"), F::Unique, s.unique_pets);
         b.gap(10);
-        let bw = px(sc, 200);
+        b.note(t("Changing size or smoothing reloads the pets (they stay where they are)."), 2);
+        let general = b.finish_page(top);
+
+        // --- Pets
+        let bw = (b.w - px(sc, 10)) / 2;
         b.button(t("Choose pets..."), CMD_CHOOSE, b.x0, bw);
         b.button(t("Open pets folder"), CMD_PETS_FOLDER, b.x0 + bw + px(sc, 10), bw);
         b.gap(36);
-        b.button(t("Add pets from Shimeji zip..."), CMD_ADD_PETS, b.x0, 2 * bw + px(sc, 10));
-        b.gap(40);
-        b.note(t("Changing size or smoothing reloads the pets (they stay where they are)."), 2);
-        let general = b.finish_page(top);
+        b.button(t("Add pets from Shimeji zip..."), CMD_ADD_PETS, b.x0, b.w);
+        b.gap(36);
+        b.check(t("Offer to add pets downloaded to the Downloads folder"), F::Watch, s.watch_downloads);
+        b.gap(8);
+        b.note(t("Where to find pets (click a link, download in the browser):"), 1);
+        for (name, url, desc) in SITES {
+            b.link(&format!("<a href=\"{url}\">{name}</a> - {}", t(desc)), 2);
+        }
+        let pets = b.finish_page(top);
+
+        // --- Life
+        let l = &s.life;
+        b.note(t("What pets do on their own, with each other, your windows and you."), 1);
+        b.gap(2);
+        b.check(t("Pets can stand on each other's heads"), F::LStack, l.stacking);
+        b.check(t("Pets greet each other when they meet"), F::LMeet, l.meet);
+        b.check(t("Pets play tag, follow the leader and fetch the ball"), F::LGames, l.games);
+        b.check(t("Pets sometimes hide behind the window they climb"), F::LHide, l.hide);
+        b.check(t("Pets push windows (moves your windows a little)"), F::LPush, l.push);
+        b.check(t("Pets fall asleep when you're away"), F::LSleep, l.sleep);
+        b.edit(t("    ...after this many minutes"), F::LSleepMin, &l.sleep_minutes.to_string(), true);
+        b.check(t("Greetings in the morning, lunch reminder, sleepy at night"), F::LDay, l.daytime);
+        b.check(t("Little hearts, stars and zzz above pets"), F::LEmotes, l.emotes);
+        b.check(t("Pets talk about what they do (speech bubbles)"), F::LTalk, l.talk);
+        b.gap(6);
+        let tw = (b.w - 3 * px(sc, 8)) / 4;
+        b.button(t("Drop a cookie"), CMD_COOKIE, b.x0, tw);
+        b.button(t("Throw a ball"), CMD_BALL, b.x0 + tw + px(sc, 8), tw);
+        b.button(t("Release a balloon"), CMD_BALLOON, b.x0 + 2 * (tw + px(sc, 8)), tw);
+        b.button(t("Bed"), CMD_BED, b.x0 + 3 * (tw + px(sc, 8)), tw);
+        let life = b.finish_page(top);
 
         // --- Windows
         b.check(t("Pets play with windows (stand, climb, hang on them)"), F::Interact, s.interact);
@@ -319,7 +380,7 @@ pub fn open(s: &Settings, icon: HICON) {
         mk(t("Apply"), ID_APPLY, cw - m - bw2, false);
 
         let ctls = std::mem::take(&mut b.ctls);
-        UI.with(|u| *u.borrow_mut() = Some(Ui { hwnd, pages: vec![general, windows, pranks], ctls, font }));
+        UI.with(|u| *u.borrow_mut() = Some(Ui { hwnd, pages: vec![general, pets, life, windows, pranks], ctls, font }));
         show_page(0);
         // tab control must stay below its page controls
         SetWindowPos(tab, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -352,6 +413,17 @@ pub fn read(base: &Settings) -> Option<Settings> {
             F::Sounds => s.sounds = on,
             F::Cloning => s.cloning = on,
             F::Unique => s.unique_pets = on,
+            F::Watch => s.watch_downloads = on,
+            F::LStack => s.life.stacking = on,
+            F::LMeet => s.life.meet = on,
+            F::LGames => s.life.games = on,
+            F::LHide => s.life.hide = on,
+            F::LPush => s.life.push = on,
+            F::LSleep => s.life.sleep = on,
+            F::LSleepMin => s.life.sleep_minutes = text_of(h).trim().parse::<u32>().unwrap_or(s.life.sleep_minutes).clamp(1, 240),
+            F::LDay => s.life.daytime = on,
+            F::LEmotes => s.life.emotes = on,
+            F::LTalk => s.life.talk = on,
             F::Interact => s.interact = on,
             F::Throw => s.throw_windows = on,
             F::Keep => s.keep_on_screen = on,

@@ -15,8 +15,16 @@ no installer. Copy the folder anywhere and run `Popeto.exe` (~1 MB, ~15 MB RAM).
 - Multi-monitor, per-monitor DPI, fullscreen detection (hide over games, stay visible over Remote Desktop).
 - **Pet chooser** with previews, **settings window** (General / Windows / Pranks), tray menu.
 - **Importer**: add pets from a downloaded Shimeji zip or folder; shared `conf\` is attached automatically.
+  Pets in the mobile Shimeji app format (shimeji.org: `manifest.json` + `animation.json` + WebP frames) are
+  converted to Shimeji-ee using the template in `assets/template`.
+- **Getting pets**: tray links to shimeji.org, Cachomon, Kilkakon, r/shimeji and DeviantArt; Popeto watches the
+  Downloads folder and offers to add new Shimeji zips with one click; zips can also be dropped onto a pet.
+  (Downloads always happen in your browser, so sites' ads, Patreon and terms are respected.)
 - **Fresh internet pictures** (optional): a background thread fetches random funny pictures and memes
   (sources in `pranks\*\online.txt`, e.g. r/Pikabu for Russian) through WinHTTP and keeps them in memory only.
+- **Life**: pets stand on each other, greet, play tag / follow the leader / fetch, hide behind and push
+  windows, sleep while you're away (idle time from Windows, no hooks), react to the time of day, show
+  emote particles; toys: cookie, ball, balloon, bed. Shimeji-ee `ScanMove`/`Interact`/`Broadcast` work too.
 - **Pranks** (goose-style, all off by default): pets bring notes and pictures, leave muddy footprints, grab
   the cursor (shake to escape), talk in speech bubbles, honk, stomp/minimize windows, play with a ball.
   Panic hotkey (default `Ctrl+Shift+F12`) hides everything. No keyboard/mouse hooks, no injection.

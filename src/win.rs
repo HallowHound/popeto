@@ -57,9 +57,22 @@ unsafe extern "system" fn pet_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
         WM_CAPTURECHANGED => push(Ev::Release(h as isize)),
         WM_RBUTTONUP => push(Ev::RClick(h as isize)),
         WM_DISPLAYCHANGE => push(Ev::Display),
+        WM_DROPFILES => { if let Some(p) = dropped_file(wp) { push(Ev::Import(p)); } return 0; }
         _ => {}
     }
     DefWindowProcW(h, msg, wp, lp)
+}
+
+/// First file of a WM_DROPFILES drop (the HDROP is released).
+pub fn dropped_file(wp: WPARAM) -> Option<String> {
+    use windows_sys::Win32::UI::Shell::{DragFinish, DragQueryFileW, HDROP};
+    unsafe {
+        let hd = wp as HDROP;
+        let mut buf = [0u16; 1024];
+        let n = DragQueryFileW(hd, 0, buf.as_mut_ptr(), buf.len() as u32);
+        DragFinish(hd);
+        (n > 0).then(|| String::from_utf16_lossy(&buf[..n as usize]))
+    }
 }
 
 unsafe extern "system" fn tray_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -130,7 +143,7 @@ pub fn create_pet_window() -> HWND {
         let cls = wide(PET_CLASS);
         let title = wide("Popeto pet");
         CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+            WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_ACCEPTFILES,
             cls.as_ptr(), title.as_ptr(), WS_POPUP,
             -10000, -10000, 1, 1, null_mut(), null_mut(), GetModuleHandleW(null()), null(),
         )
@@ -156,6 +169,31 @@ pub fn window_pos(h: HWND) -> (i32, i32) {
 }
 
 pub fn set_cursor(x: i32, y: i32) { unsafe { SetCursorPos(x, y); } }
+
+/// Milliseconds since the last keyboard/mouse input anywhere (Windows keeps this; no hooks needed).
+pub fn idle_ms() -> u32 {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+    unsafe {
+        let mut li = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
+        if GetLastInputInfo(&mut li) == 0 { return 0; }
+        windows_sys::Win32::System::SystemInformation::GetTickCount().wrapping_sub(li.dwTime)
+    }
+}
+
+/// Local (hour, day of year-ish key).
+pub fn local_time() -> (u16, u32) {
+    unsafe {
+        let mut st = std::mem::zeroed();
+        windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut st);
+        let st: windows_sys::Win32::Foundation::SYSTEMTIME = st;
+        (st.wHour, st.wYear as u32 * 1000 + st.wMonth as u32 * 40 + st.wDay as u32)
+    }
+}
+
+/// Put a pet window right behind another app's window (it drops out of always-on-top).
+pub fn place_behind(pet: HWND, target: isize) {
+    unsafe { SetWindowPos(pet, target as HWND, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); }
+}
 
 pub fn minimize_app_window(h: isize) { unsafe { ShowWindowAsync(h as HWND, SW_MINIMIZE); } }
 
@@ -236,6 +274,8 @@ pub fn destroy(h: HWND) { unsafe { DestroyWindow(h); } }
 pub struct Bmp {
     pub w: i32,
     pub h: i32,
+    /// Visible part of the picture (left, top, right, bottom), unflipped.
+    pub opaque: (i32, i32, i32, i32),
     pub normal: HBITMAP,
     pub flipped: HBITMAP,
 }
@@ -249,8 +289,16 @@ pub fn load_rgba(path: &Path, scale: f64, nearest: bool) -> Option<(u32, u32, Ve
     Some((nw, nh, resize(&rgba, w, h, nw, nh, nearest)))
 }
 
-/// PNG or JPEG bytes to straight RGBA (format detected from the content, not the name).
+/// PNG, JPEG or WebP bytes to straight RGBA (format detected from the content, not the name).
 pub fn decode_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        let mut d = image_webp::WebPDecoder::new(std::io::Cursor::new(bytes)).ok()?;
+        let (w, h) = d.dimensions();
+        let mut buf = vec![0u8; d.output_buffer_size()?];
+        d.read_image(&mut buf).ok()?;
+        let rgba = if d.has_alpha() { buf } else { buf.chunks(3).flat_map(|c| [c[0], c[1], c[2], 255]).collect() };
+        return Some((w, h, rgba));
+    }
     if bytes.starts_with(&[0xFF, 0xD8]) {
         let mut d = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
         let px = d.decode().ok()?;
@@ -356,7 +404,12 @@ pub fn make_bmp(path: &Path, scale: f64, nearest: bool) -> Option<Bmp> {
     let normal = make_dib(w, h, &rgba, false, true);
     let flipped = make_dib(w, h, &rgba, true, true);
     if normal.is_null() || flipped.is_null() { return None; }
-    Some(Bmp { w: w as i32, h: h as i32, normal, flipped })
+    let (mut l, mut t, mut r, mut b) = (w as i32, h as i32, 0, 0);
+    for y in 0..h as i32 { for x in 0..w as i32 {
+        if rgba[((y * w as i32 + x) * 4 + 3) as usize] > 40 { l = l.min(x); t = t.min(y); r = r.max(x + 1); b = b.max(y + 1); }
+    } }
+    if r <= l { (l, t, r, b) = (0, 0, w as i32, h as i32); }
+    Some(Bmp { w: w as i32, h: h as i32, opaque: (l, t, r, b), normal, flipped })
 }
 
 pub fn free_bmp(b: &Bmp) { unsafe { DeleteObject(b.normal); DeleteObject(b.flipped); } }
@@ -638,6 +691,32 @@ pub fn tray(h: HWND, icon: HICON, op: u32) {
         Shell_NotifyIconW(op, &nid);
     }
 }
+/// Show a tray notification (clicking it sends Ev::Tray(MSG_BALLOON_CLICK)).
+pub fn tray_balloon(h: HWND, title: &str, text: &str) {
+    unsafe {
+        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+        nid.hWnd = h;
+        nid.uID = 1;
+        nid.uFlags = NIF_INFO;
+        let (t, x) = (wide(title), wide(text));
+        let tl = t.len().min(nid.szInfoTitle.len());
+        nid.szInfoTitle[..tl].copy_from_slice(&t[..tl]);
+        nid.szInfoTitle[tl.saturating_sub(1)] = 0;
+        let xl = x.len().min(nid.szInfo.len());
+        nid.szInfo[..xl].copy_from_slice(&x[..xl]);
+        nid.szInfo[xl.saturating_sub(1)] = 0;
+        nid.dwInfoFlags = NIIF_INFO;
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+}
+pub const MSG_BALLOON_CLICK: u32 = WM_USER + 5; // NIN_BALLOONUSERCLICK
+
+pub fn open_url(url: &str) {
+    let (p, op) = (wide(url), wide("open"));
+    unsafe { ShellExecuteW(null_mut(), op.as_ptr(), p.as_ptr(), null(), null(), SW_SHOWNORMAL); }
+}
+
 pub const TRAY_ADD: u32 = NIM_ADD;
 pub const TRAY_DEL: u32 = NIM_DELETE;
 pub const TRAY_MOD: u32 = NIM_MODIFY;

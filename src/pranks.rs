@@ -15,10 +15,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::DestroyWindow;
 // ---------------------------------------------------------------- drawing
 
 /// 32bpp top-down DIB we can draw into with GDI and then fix up per pixel.
-struct Canvas { dc: HDC, bmp: HBITMAP, old: HGDIOBJ, bits: *mut u8, w: i32, h: i32 }
+pub(crate) struct Canvas { dc: HDC, bmp: HBITMAP, old: HGDIOBJ, bits: *mut u8, w: i32, h: i32 }
 
 impl Canvas {
-    fn new(w: i32, h: i32) -> Canvas {
+    pub(crate) fn new(w: i32, h: i32) -> Canvas {
         unsafe {
             let mut bi: BITMAPINFO = std::mem::zeroed();
             bi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
@@ -34,12 +34,12 @@ impl Canvas {
             Canvas { dc, bmp, old, bits: bits as *mut u8, w, h }
         }
     }
-    fn px(&mut self) -> &mut [u8] { unsafe { std::slice::from_raw_parts_mut(self.bits, (self.w * self.h * 4) as usize) } }
-    fn fill(&mut self, c: (u8, u8, u8)) {
+    pub(crate) fn px(&mut self) -> &mut [u8] { unsafe { std::slice::from_raw_parts_mut(self.bits, (self.w * self.h * 4) as usize) } }
+    pub(crate) fn fill(&mut self, c: (u8, u8, u8)) {
         unsafe { GdiFlush(); }
         for p in self.px().chunks_mut(4) { p[0] = c.2; p[1] = c.1; p[2] = c.0; p[3] = 255; }
     }
-    fn text(&mut self, s: &str, r: RECT, size: i32, bold: bool, color: (u8, u8, u8), flags: u32) -> RECT {
+    pub(crate) fn text(&mut self, s: &str, r: RECT, size: i32, bold: bool, color: (u8, u8, u8), flags: u32) -> RECT {
         unsafe {
             let face = win::wide("Segoe UI");
             let f = CreateFontW(-size, 0, 0, 0, if bold { 700 } else { 400 }, 0, 0, 0, DEFAULT_CHARSET as _, 0, 0, ANTIALIASED_QUALITY as _, 0, face.as_ptr());
@@ -56,12 +56,12 @@ impl Canvas {
         }
     }
     /// Measure wrapped text.
-    fn measure(&mut self, s: &str, width: i32, size: i32, bold: bool) -> (i32, i32) {
+    pub(crate) fn measure(&mut self, s: &str, width: i32, size: i32, bold: bool) -> (i32, i32) {
         let r = self.text(s, RECT { left: 0, top: 0, right: width, bottom: 10000 }, size, bold, (0, 0, 0), DT_WORDBREAK | DT_CALCRECT | DT_CENTER);
         (r.right - r.left, r.bottom - r.top)
     }
     /// Apply per-pixel alpha (0..=1 coverage) and premultiply. Returns the finished bitmap.
-    fn finish(mut self, alpha: impl Fn(f32, f32) -> f32) -> HBITMAP {
+    pub(crate) fn finish(mut self, alpha: impl Fn(f32, f32) -> f32) -> HBITMAP {
         let (w, h) = (self.w, self.h);
         let px = self.px();
         for y in 0..h {
@@ -78,7 +78,7 @@ impl Canvas {
 }
 
 /// Signed distance to a rounded rectangle (negative inside).
-fn rrect(x: f32, y: f32, l: f32, t: f32, r: f32, b: f32, rad: f32) -> f32 {
+pub(crate) fn rrect(x: f32, y: f32, l: f32, t: f32, r: f32, b: f32, rad: f32) -> f32 {
     let (cx, cy) = ((l + r) / 2.0, (t + b) / 2.0);
     let (hx, hy) = ((r - l) / 2.0 - rad, (b - t) / 2.0 - rad);
     let (qx, qy) = ((x - cx).abs() - hx, (y - cy).abs() - hy);
@@ -86,7 +86,7 @@ fn rrect(x: f32, y: f32, l: f32, t: f32, r: f32, b: f32, rad: f32) -> f32 {
     out + qx.max(qy).min(0.0) - rad
 }
 
-fn cover(d: f32) -> f32 { (0.5 - d).clamp(0.0, 1.0) }
+pub(crate) fn cover(d: f32) -> f32 { (0.5 - d).clamp(0.0, 1.0) }
 
 fn paint_shadow_card(c: &mut Canvas, card: (f32, f32, f32, f32), rad: f32, fill: (u8, u8, u8)) {
     let (w, h) = (c.w, c.h);
@@ -363,7 +363,7 @@ fn files(dir: &Path, ext: &str) -> Vec<PathBuf> {
         .filter(|p| p.extension().map(|x| x.eq_ignore_ascii_case(ext)).unwrap_or(false)).collect()
 }
 
-fn pick<T: Clone>(v: &[T]) -> Option<T> {
+pub(crate) fn pick<T: Clone>(v: &[T]) -> Option<T> {
     if v.is_empty() { None } else { Some(v[(random() * v.len() as f64) as usize % v.len()].clone()) }
 }
 
@@ -372,12 +372,12 @@ fn pick<T: Clone>(v: &[T]) -> Option<T> {
 pub struct Overlay { pub hwnd: HWND, pub gfx: Gfx }
 
 impl Overlay {
-    fn new(gfx: Gfx, click_through: bool, close_px: i32) -> Overlay { Overlay { hwnd: win::create_overlay(click_through, close_px), gfx } }
-    fn show(&self, p: &win::Painter, x: i32, y: i32, alpha: u8) {
+    pub(crate) fn new(gfx: Gfx, click_through: bool, close_px: i32) -> Overlay { Overlay { hwnd: win::create_overlay(click_through, close_px), gfx } }
+    pub(crate) fn show(&self, p: &win::Painter, x: i32, y: i32, alpha: u8) {
         p.update(self.hwnd, self.gfx.bmp, x, y, self.gfx.w, self.gfx.h, alpha);
         win::show(self.hwnd, true);
     }
-    fn close(self) { unsafe { DestroyWindow(self.hwnd); DeleteObject(self.gfx.bmp); } }
+    pub(crate) fn close(self) { unsafe { DestroyWindow(self.hwnd); DeleteObject(self.gfx.bmp); } }
 }
 
 struct Bubble { pet: u32, ov: Overlay, ticks: u32 }
@@ -392,7 +392,19 @@ enum Job {
     Grab { pet: u32, ticks: u32, shakes: u32, last: (i32, i32), dest: (i32, i32) },
 }
 
-pub struct Ball { ov: Overlay, x: f64, y: f64, vx: f64, vy: f64, r: f64, pub dragging: bool }
+pub struct Ball {
+    pub(crate) ov: Overlay,
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) vx: f64,
+    pub(crate) vy: f64,
+    pub(crate) r: f64,
+    pub dragging: bool,
+    /// Fetch: after you throw the ball a pet brings it back to the cursor.
+    pub(crate) fetch: bool,
+    pub(crate) carrier: Option<u32>,
+    pub(crate) carrying: bool,
+}
 
 #[derive(Default)]
 pub struct Pranks {
@@ -410,8 +422,8 @@ pub struct Pranks {
     pub restack: bool,
 }
 
-const ACT_RUN: [&str; 3] = ["Run", "Dash", "Walk"];
-const ACT_WALK: [&str; 2] = ["Walk", "Run"];
+pub(crate) const ACT_RUN: [&str; 3] = ["Run", "Dash", "Walk"];
+pub(crate) const ACT_WALK: [&str; 2] = ["Walk", "Run"];
 
 impl Pranks {
     /// Content folders in use: universal + the current language.
@@ -427,7 +439,7 @@ impl Pranks {
         self.dirs().iter().flat_map(|d| files(&d.join(sub), ext)).collect()
     }
     pub fn new(root: &Path) -> Pranks { let mut p = Pranks::default(); p.dir = root.join("pranks"); p }
-    fn busy(&self, pet: u32) -> bool {
+    pub(crate) fn busy(&self, pet: u32) -> bool {
         self.jobs.iter().any(|j| match j { Job::ToEdge { pet: p, .. } | Job::Bring { pet: p, .. } | Job::Leap { pet: p, .. } | Job::Grab { pet: p, .. } => *p == pet })
     }
     pub fn holds_cursor(&self) -> bool { self.jobs.iter().any(|j| matches!(j, Job::Grab { .. })) }
@@ -463,15 +475,15 @@ fn interval(level: u8, base_s: f64) -> u64 {
 }
 
 impl App {
-    fn ui_scale(&self) -> f64 { self.scale.max(0.5) }
+    pub(crate) fn ui_scale(&self) -> f64 { self.scale.max(0.5) }
 
-    fn dbg(&mut self, s: &str) { if self.settings.debug { self.log.push(format!("[prank t={}] {s}", self.tick_n)); } }
+    pub(crate) fn dbg(&mut self, s: &str) { if self.settings.debug { self.log.push(format!("[prank t={}] {s}", self.tick_n)); } }
 
-    fn pet_index(&self, id: u32) -> Option<usize> { self.pets.iter().position(|p| p.m.id == id) }
+    pub(crate) fn pet_index(&self, id: u32) -> Option<usize> { self.pets.iter().position(|p| p.m.id == id) }
 
-    fn floor_of(&mut self, i: usize) -> BorderRef { self.with_pet(i, |m, _, env, _, _| env.floor(m.st.anchor)) }
+    pub(crate) fn floor_of(&mut self, i: usize) -> BorderRef { self.with_pet(i, |m, _, env, _, _| env.floor(m.st.anchor)) }
 
-    fn run_on(&mut self, i: usize, names: &[&str], params: &[(&str, &str)], tag: &str) -> bool {
+    pub(crate) fn run_on(&mut self, i: usize, names: &[&str], params: &[(&str, &str)], tag: &str) -> bool {
         let names: Vec<String> = names.iter().map(|s| s.to_string()).collect();
         let params: Vec<(String, String)> = params.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
         let tag = tag.to_string();
@@ -484,14 +496,18 @@ impl App {
     /// A random pet that is free, visible and standing on the bottom of the screen (or anything, if `any_place`).
     fn free_pet(&mut self, floor_only: bool) -> Option<usize> {
         let mut c: Vec<usize> = (0..self.pets.len())
-            .filter(|&i| { let p = &self.pets[i]; p.w.shown && !p.m.st.dragging && !p.m.holding && !self.pranks.busy(p.m.id) })
+            .filter(|&i| { let p = &self.pets[i]; p.w.shown && !p.m.st.dragging && !p.m.holding && !self.pranks.busy(p.m.id) && !self.life.busy(p.m.id) })
             .collect();
         if floor_only { c.retain(|&i| self.floor_of(i) == BorderRef::Work(Side::Bottom)); }
         pick(&c)
     }
 
     pub fn say(&mut self, pet: u32, section: &str) {
-        if !self.settings.pranks.talk { return; }
+        if self.settings.pranks.talk { self.say_always(pet, section); }
+    }
+
+    /// Speech bubble regardless of the prank switch (life events have their own).
+    pub fn say_always(&mut self, pet: u32, section: &str) {
         let Some(line) = pick(&self.pranks.texts("talk.txt", Some(section))) else { return };
         if let Some(i) = self.pranks.bubbles.iter().position(|b| b.pet == pet) { self.pranks.bubbles.remove(i).ov.close(); }
         let ov = Overlay::new(bubble_gfx(&line, self.ui_scale()), true, 0);
@@ -566,7 +582,7 @@ impl App {
         let r = (16.0 * self.ui_scale()).round();
         let ov = Overlay::new(ball_gfx(r as i32), false, 0);
         let x = m.work.l as f64 + 100.0 + random() * (m.work.w() as f64 - 200.0);
-        self.pranks.ball = Some(Ball { ov, x, y: m.work.t as f64 + 40.0, vx: (random() - 0.5) * 16.0, vy: 0.0, r, dragging: false });
+        self.pranks.ball = Some(Ball { ov, x, y: m.work.t as f64 + 40.0, vx: (random() - 0.5) * 16.0, vy: 0.0, r, dragging: false, fetch: false, carrier: None, carrying: false });
     }
 
     pub fn remove_ball(&mut self) { if let Some(b) = self.pranks.ball.take() { b.ov.close(); } }
@@ -574,6 +590,7 @@ impl App {
     pub fn panic(&mut self) {
         self.release_cursor(false);
         self.pranks.clear();
+        self.life.clear();
         self.pranks.panic_hidden = !self.pranks.panic_hidden;
         let hide = self.pranks.panic_hidden;
         self.paused = hide;
@@ -629,7 +646,7 @@ impl App {
         let t = self.tick_n;
         let enabled = [p.notes, p.memes, p.cursor, p.talk, p.honk, p.windows];
         let base = [240.0, 300.0, 180.0, 45.0, 120.0, 150.0];
-        if !self.pets.is_empty() && !self.pranks.panic_hidden {
+        if !self.pets.is_empty() && !self.pranks.panic_hidden && !self.life.away {
             for k in 0..6 {
                 if !enabled[k] { self.pranks.next[k] = 0; continue; }
                 if self.pranks.next[k] == 0 { self.pranks.next[k] = t + interval(lvl, base[k]); }
@@ -788,6 +805,10 @@ impl App {
                 win::release_capture();
                 b.vx = self.world.cursor_d.0 as f64;
                 b.vy = self.world.cursor_d.1 as f64;
+                // thrown by you: a pet may bring it back
+                b.fetch = self.settings.life.games && random() < 0.7;
+                b.carrier = None;
+                b.carrying = false;
             }
         }
     }
@@ -815,11 +836,16 @@ impl App {
             if b.x > work.r as f64 - b.r { b.x = work.r as f64 - b.r; b.vx = -b.vx.abs() * 0.7; }
             if b.y < work.t as f64 + b.r { b.y = work.t as f64 + b.r; b.vy = b.vy.abs(); }
         }
-        // pets on the floor chase the ball and kick it
         let on_floor = b.y >= work.b as f64 - b.r - 4.0;
+        if b.fetch && !b.dragging && self.fetch_step(&mut b, work, on_floor) {
+            b.ov.show(&self.painter, (b.x - b.r) as i32 - 1, (b.y - b.r) as i32 - 1, 255);
+            self.pranks.ball = Some(b);
+            return;
+        }
+        // pets on the floor chase the ball and kick it
         for i in 0..self.pets.len() {
             let (id, a) = (self.pets[i].m.id, self.pets[i].m.st.anchor);
-            if self.pets[i].m.st.dragging || self.pranks.busy(id) { continue; }
+            if self.pets[i].m.st.dragging || self.pranks.busy(id) || self.life.busy(id) { continue; }
             if a.1 != work.b { continue; }
             let dx = b.x - a.0 as f64;
             if dx.abs() < b.r + 18.0 * s && on_floor && !b.dragging {

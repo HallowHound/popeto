@@ -13,6 +13,12 @@ Pets
   downloaded Shimeji / Shimeji-ee zip, or any file inside an unpacked Shimeji folder. Popeto copies
   every pet into img\ together with its conf (old Shimeji-ee downloads keep conf outside the pet folder).
   Or drop a pet folder into img\ yourself and pick "Reload pets" in the tray menu.
+  Getting pets: tray > "Get more pets" opens shimeji.org, Cachomon, Kilkakon, r/shimeji or DeviantArt
+  in your browser. Download as usual there; when a Shimeji zip lands in your Downloads folder, Popeto
+  shows a notification - click it (or the tray menu item "Add downloaded pet") to add the pet.
+  You can also drag a zip onto any pet or onto the settings window.
+  Pets from shimeji.org come in the mobile Shimeji app format (manifest.json, animation.json, .webp
+  frames). Popeto converts them automatically into a normal pet (PNG frames + generated conf).
   Folder img\unused is ignored.
   Tray menu > "Choose pets..." opens a window with every pet's picture and name: click to switch
   pets on/off, double-click to keep only one. Tick "Show at startup" to see it on every launch.
@@ -49,6 +55,15 @@ Pranks (tray > Pranks, everything OFF until you tick it)
   How often          Calm / Normal / Chaos
   Throw a ball       pets chase and kick it; drag to throw it, right click to take it away
   Notes: drag to move, click the x (or right click) to close. "Clean up" removes notes and footprints.
+
+Life (Settings > Life; on by default except pushing windows)
+  Pets stand on each other's heads, greet each other, play tag, walk in a line behind a leader,
+  fetch the ball you throw, hide behind the window they climb, push windows (off by default),
+  fall asleep when you haven't touched keyboard/mouse for a few minutes and wake up when you return,
+  say good morning / lunch time / good night, and show little hearts, stars and zzz.
+  Toys (tray > Toys, or Settings > Life): drop a cookie (pets run to eat it), throw a ball,
+  release a balloon (pets jump for it; click to pop), put a bed (pets nap on it). Drag cookies and
+  the bed around; right click a toy to remove it.
 
 Panic key (default Ctrl+Shift+F12, PanicKey= in popeto.ini): hides every pet and stops all pranks;
 press again to bring them back. No keyboard/mouse hooks are used.

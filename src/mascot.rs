@@ -152,6 +152,11 @@ impl Mascot {
         true
     }
 
+    /// What this pet currently offers other pets (Shimeji-ee affordance).
+    pub fn affordance(&self, env: &EnvView) -> Option<String> {
+        self.act.as_ref()?.leaf().affordance(&self.st, env)
+    }
+
     /// Animation + draggable flag of the action currently playing.
     pub fn current(&self, env: &EnvView) -> Option<(Rc<Animation>, bool)> {
         let leaf = self.act.as_ref()?.leaf();
