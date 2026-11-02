@@ -15,6 +15,8 @@ no installer. Copy the folder anywhere and run `Popeto.exe` (~1 MB, ~15 MB RAM).
 - Multi-monitor, per-monitor DPI, fullscreen detection (hide over games, stay visible over Remote Desktop).
 - **Pet chooser** with previews, **settings window** (General / Windows / Pranks), tray menu.
 - **Importer**: add pets from a downloaded Shimeji zip or folder; shared `conf\` is attached automatically.
+- **Fresh internet pictures** (optional): a background thread fetches random funny pictures and memes
+  (sources in `pranks\*\online.txt`, e.g. r/Pikabu for Russian) through WinHTTP and keeps them in memory only.
 - **Pranks** (goose-style, all off by default): pets bring notes and pictures, leave muddy footprints, grab
   the cursor (shake to escape), talk in speech bubbles, honk, stomp/minimize windows, play with a ball.
   Panic hotkey (default `Ctrl+Shift+F12`) hides everything. No keyboard/mouse hooks, no injection.

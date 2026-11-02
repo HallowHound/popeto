@@ -240,17 +240,42 @@ pub struct Bmp {
     pub flipped: HBITMAP,
 }
 
-/// Decode PNG into straight RGBA, scaled.
+/// Decode a PNG/JPEG file into straight RGBA, scaled.
 pub fn load_rgba(path: &Path, scale: f64, nearest: bool) -> Option<(u32, u32, Vec<u8>)> {
-    let f = std::fs::File::open(path).ok()?;
-    let mut dec = png::Decoder::new(std::io::BufReader::new(f));
+    let (w, h, rgba) = decode_rgba(&std::fs::read(path).ok()?)?;
+    if (scale - 1.0).abs() < 1e-3 { return Some((w, h, rgba)); }
+    let nw = ((w as f64 * scale).round() as u32).max(1);
+    let nh = ((h as f64 * scale).round() as u32).max(1);
+    Some((nw, nh, resize(&rgba, w, h, nw, nh, nearest)))
+}
+
+/// PNG or JPEG bytes to straight RGBA (format detected from the content, not the name).
+pub fn decode_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    if bytes.starts_with(&[0xFF, 0xD8]) {
+        let mut d = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
+        let px = d.decode().ok()?;
+        let info = d.info()?;
+        let (w, h) = (info.width as u32, info.height as u32);
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        match info.pixel_format {
+            jpeg_decoder::PixelFormat::RGB24 => px.chunks(3).for_each(|c| rgba.extend_from_slice(&[c[0], c[1], c[2], 255])),
+            jpeg_decoder::PixelFormat::L8 => px.iter().for_each(|&c| rgba.extend_from_slice(&[c, c, c, 255])),
+            jpeg_decoder::PixelFormat::L16 => px.chunks(2).for_each(|c| rgba.extend_from_slice(&[c[0], c[0], c[0], 255])),
+            jpeg_decoder::PixelFormat::CMYK32 => px.chunks(4).for_each(|c| {
+                let k = 255 - c[3] as u32;
+                let f = |v: u8| ((255 - v as u32) * k / 255) as u8;
+                rgba.extend_from_slice(&[f(c[0]), f(c[1]), f(c[2]), 255]);
+            }),
+        }
+        return Some((w, h, rgba));
+    }
+    let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
     dec.set_transformations(png::Transformations::normalize_to_color8());
     let mut r = dec.read_info().ok()?;
     let mut buf = vec![0; r.output_buffer_size()];
     let info = r.next_frame(&mut buf).ok()?;
     let (w, h) = (info.width, info.height);
-    let px = (w * h) as usize;
-    let mut rgba = Vec::with_capacity(px * 4);
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
     let b = &buf[..info.buffer_size()];
     match info.color_type {
         png::ColorType::Rgba => rgba.extend_from_slice(b),
@@ -259,13 +284,10 @@ pub fn load_rgba(path: &Path, scale: f64, nearest: bool) -> Option<(u32, u32, Ve
         png::ColorType::Grayscale => b.iter().for_each(|&c| rgba.extend_from_slice(&[c, c, c, 255])),
         png::ColorType::Indexed => return None,
     }
-    if (scale - 1.0).abs() < 1e-3 { return Some((w, h, rgba)); }
-    let nw = ((w as f64 * scale).round() as u32).max(1);
-    let nh = ((h as f64 * scale).round() as u32).max(1);
-    Some((nw, nh, resize(&rgba, w, h, nw, nh, nearest)))
+    Some((w, h, rgba))
 }
 
-fn resize(src: &[u8], w: u32, h: u32, nw: u32, nh: u32, nearest: bool) -> Vec<u8> {
+pub fn resize(src: &[u8], w: u32, h: u32, nw: u32, nh: u32, nearest: bool) -> Vec<u8> {
     let mut out = vec![0u8; (nw * nh * 4) as usize];
     // premultiply for correct filtering
     let pm: Vec<f32> = src.chunks(4).flat_map(|c| { let a = c[3] as f32 / 255.0; [c[0] as f32 * a, c[1] as f32 * a, c[2] as f32 * a, c[3] as f32] }).collect();

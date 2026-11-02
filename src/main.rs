@@ -9,6 +9,7 @@ mod expr;
 mod importer;
 mod i18n;
 mod mascot;
+mod online;
 mod pranks;
 mod settings;
 mod settings_ui;
@@ -81,6 +82,7 @@ struct App {
     empty: HashSet<String>,
     quit: bool,
     pranks: pranks::Pranks,
+    online: online::Online,
 }
 
 // menu ids
@@ -162,6 +164,7 @@ impl App {
             empty: HashSet::new(),
             quit: false,
             pranks: prank_state,
+            online: online::Online::start(),
         }
     }
 
@@ -447,6 +450,7 @@ impl App {
         let pr = Menu::new();
         pr.item(ID_PRANK_TOGGLE, t("Bring notes"), p.notes)
             .item(ID_PRANK_TOGGLE + 1, t("Bring pictures"), p.memes)
+            .item(ID_PRANK_TOGGLE + 7, t("    ...also fresh ones from the internet (not saved)"), p.online)
             .item(ID_PRANK_TOGGLE + 2, t("Muddy footprints"), p.footprints)
             .item(ID_PRANK_TOGGLE + 3, t("Grab the cursor (shake mouse to escape)"), p.cursor)
             .item(ID_PRANK_TOGGLE + 4, t("Speech bubbles"), p.talk)
@@ -570,13 +574,14 @@ impl App {
             ID_PRANK_CLEAR => self.pranks.clear(),
             ID_PRANK_FOLDER => { let d = pranks::ensure_files(&self.root); win::open(&d); }
             _ if (ID_PRANK_LEVEL..ID_PRANK_LEVEL + 3).contains(&id) => { s.pranks.level = (id - ID_PRANK_LEVEL) as u8; s.save(); }
-            _ if (ID_PRANK_TOGGLE..ID_PRANK_TOGGLE + 7).contains(&id) => {
+            _ if (ID_PRANK_TOGGLE..ID_PRANK_TOGGLE + 8).contains(&id) => {
                 let p = &mut s.pranks;
-                let f = [&mut p.notes, &mut p.memes, &mut p.footprints, &mut p.cursor, &mut p.talk, &mut p.honk, &mut p.windows];
+                let f = [&mut p.notes, &mut p.memes, &mut p.footprints, &mut p.cursor, &mut p.talk, &mut p.honk, &mut p.windows, &mut p.online];
                 let k = id - ID_PRANK_TOGGLE;
                 *f[k] = !*f[k];
                 s.save();
                 pranks::ensure_files(&self.root);
+                self.configure_online();
             }
             _ if (ID_SIZE..ID_SIZE + SIZES.len()).contains(&id) => {
                 s.scaling = SIZES[id - ID_SIZE].0;
@@ -644,6 +649,9 @@ impl App {
             for w in &self.world.wins { d += &format!(" ({},{} {}x{})", w.rect.l, w.rect.t, w.rect.w(), w.rect.h()); }
             for p in &self.pets { d += &format!(" | {} {} at {:?} ie={:?}", self.packs[p.m.pack].name, p.m.beh, p.m.st.anchor, p.m.st.ie.is_some()); }
             self.log.push(d);
+        }
+        if self.settings.debug {
+            if let Some(e) = self.online.take_error() { self.log.push(format!("[online t={}] {e}", self.tick_n)); }
         }
         if self.paused { return; }
 
@@ -730,6 +738,15 @@ impl App {
         }
         self.trim_to_max();
         if self.settings.unique_pets { self.dedupe(); }
+        self.configure_online();
+    }
+
+    /// Start or stop fetching internet pictures; sources follow the current language.
+    fn configure_online(&mut self) {
+        let p = &self.settings.pranks;
+        let on = p.online && p.memes;
+        if on { pranks::ensure_files(&self.root); }
+        self.online.configure(on, if on { self.pranks.online_sources() } else { vec![] });
     }
 
     /// Unique pets mode: keep the oldest pet of each kind, dismiss the rest.
@@ -895,6 +912,7 @@ fn main() {
     }
     win::tray(app.tray, app.icon, win::TRAY_ADD);
     win::register_hotkey(app.tray, &app.settings.panic_key);
+    app.configure_online();
     let pr = &app.settings.pranks;
     if pr.notes || pr.memes || pr.footprints || pr.cursor || pr.talk || pr.honk || pr.windows { pranks::ensure_files(&root); }
     app.world.monitors = win::monitors();

@@ -138,10 +138,14 @@ fn note_gfx(text: &str, s: f64) -> Gfx {
 
 fn meme_gfx(img: &Path, s: f64) -> Option<Gfx> {
     let (iw, ih, rgba) = win::load_rgba(img, 1.0, false)?;
+    meme_gfx_rgba(iw, ih, &rgba, s)
+}
+
+fn meme_gfx_rgba(iw: u32, ih: u32, rgba: &[u8], s: f64) -> Option<Gfx> {
     let max = 380.0 * s;
     let k = (max / iw.max(ih) as f64).min(1.5 * s);
     let (nw, nh) = (((iw as f64 * k) as i32).max(1), ((ih as f64 * k) as i32).max(1));
-    let small = win::load_rgba(img, k, false).map(|v| v.2).unwrap_or(rgba);
+    let small = win::resize(rgba, iw, ih, nw as u32, nh as u32, false);
     let sc = |v: f64| (v * s).round() as i32;
     let (m, pad, bottom) = (sc(10.0), sc(10.0), sc(34.0));
     let (w, h) = (nw + 2 * (m + pad), nh + m * 2 + pad + bottom);
@@ -258,73 +262,16 @@ Each of these folders can have:\r\n\
   sounds      folder with .wav sounds for honking\r\n\
 Pets pick from universal + the current language together.\r\n";
 
-const UNIVERSAL_NOTES: &str = "# One note per line, understood in any language.\n\
-\u{2665} \u{2665} \u{2665}\n\
-\u{263A}\n\
-?!\n\
-!!!\n\
-z z z . . .\n\
-\u{2615} ?\n\
-\u{2605} \u{2605} \u{2605} \u{2605} \u{2605}\n\
-\u{266A} \u{266B} \u{266A}\n";
+// Default texts and internet sources ship inside the exe, taken from assets/pranks in the repo.
+const UNIVERSAL_NOTES: &str = include_str!("../assets/pranks/universal/notes.txt");
+const UNIVERSAL_TALK: &str = include_str!("../assets/pranks/universal/talk.txt");
+const UNIVERSAL_ONLINE: &str = include_str!("../assets/pranks/universal/online.txt");
 
-const UNIVERSAL_TALK: &str = "# Speech bubbles for any language. Sections: [random] [petted] [thrown] [grab] [free] [note] [window]\n\
-[random]\n...\n?\n\u{266A}\nzzz\n\u{2665}\n\
-[petted]\n\u{2665}\n\u{2665}\u{2665}\u{2665}\n\u{263A}\n\
-[thrown]\n!!!\n?!\n\
-[grab]\n!\n\u{266A}\n\
-[free]\n...\n\u{2639}\n\
-[note]\n!\n\
-[window]\n!!!\n";
-
-const EN_NOTES: &str = "# One note per line. Pets drag these onto your screen.\n\
-I was here.\n\
-Have you drunk water today?\n\
-Stand up and stretch!\n\
-Your code compiles. Probably.\n\
-I ate your bug. You're welcome.\n\
-Snack time?\n\
-This window looked lonely.\n\
-Have you saved your work?\n\
-Pet me.\n\
-I'm not supposed to be here.\n";
-
-const EN_TALK: &str = "# Speech bubbles. Lines under [section] are used for that moment.\n\
-[random]\nHi!\nBored...\nWhat are you doing?\nNice window.\n*yawn*\nCan I help?\nI see you.\nOoh, a cursor!\n\
-[petted]\nHehe\nMore!\n<3\n\
-[thrown]\nWheee!\nHey!!\nNot again!\n\
-[grab]\nMine!\nGotcha!\nLet's go this way.\n\
-[free]\nFine, take it.\nSpoilsport.\n\
-[note]\nDelivery!\nRead it!\n\
-[window]\nBye bye window!\nBoing boing!\n";
-
-const RU_NOTES: &str = "# Одна записка на строку. Питомцы приносят их на экран.\n\
-Я тут был.\n\
-Ты сегодня пил воду?\n\
-Встань и потянись!\n\
-Код компилируется. Наверное.\n\
-Я съел твой баг. Не благодари.\n\
-Не пора ли перекусить?\n\
-Этому окну было одиноко.\n\
-Ты сохранил работу?\n\
-Погладь меня.\n\
-Меня здесь быть не должно.\n\
-Пора сделать перерыв!\n\
-А что это ты тут делаешь?\n";
-
-const RU_TALK: &str = "# Реплики. Строки под [разделом] используются в этот момент.\n\
-[random]\nПривет!\nСкучно...\nЧто делаешь?\nХорошее окошко.\n*зевает*\nПомочь?\nЯ тебя вижу.\nО, курсор!\nМяу?\n\
-[petted]\nХи-хи\nЕщё!\n<3\nМррр...\n\
-[thrown]\nУиии!\nЭй!!\nОпять?!\n\
-[grab]\nМоё!\nПопался!\nПойдём туда.\n\
-[free]\nЛадно, забирай.\nЗануда.\n\
-[note]\nПочта!\nПрочитай!\n\
-[window]\nПока-пока, окно!\nБум-бум!\n";
-
-fn default_texts(lang: &str) -> (&'static str, &'static str) {
+/// (notes, talk, online) defaults for a language folder.
+fn default_texts(lang: &str) -> (&'static str, &'static str, &'static str) {
     match lang {
-        "ru" => (RU_NOTES, RU_TALK),
-        _ => (EN_NOTES, EN_TALK),
+        "ru" => (include_str!("../assets/pranks/ru/notes.txt"), include_str!("../assets/pranks/ru/talk.txt"), include_str!("../assets/pranks/ru/online.txt")),
+        _ => (include_str!("../assets/pranks/en/notes.txt"), include_str!("../assets/pranks/en/talk.txt"), include_str!("../assets/pranks/en/online.txt")),
     }
 }
 
@@ -388,8 +335,10 @@ pub fn ensure_files(root: &Path) -> PathBuf {
     put(uni.join("notes.txt"), UNIVERSAL_NOTES.as_bytes());
     put(uni.join("talk.txt"), UNIVERSAL_TALK.as_bytes());
     put(uni.join("sounds").join("honk.wav"), &honk_wav());
+    put(uni.join("online.txt"), UNIVERSAL_ONLINE.as_bytes());
     for (code, _) in crate::i18n::LANGUAGES {
-        let (notes, talk) = default_texts(code);
+        let (notes, talk, online) = default_texts(code);
+        put(dir.join(code).join("online.txt"), online.as_bytes());
         put(dir.join(code).join("notes.txt"), notes.as_bytes());
         put(dir.join(code).join("talk.txt"), talk.as_bytes());
     }
@@ -469,6 +418,10 @@ impl Pranks {
     fn dirs(&self) -> [PathBuf; 2] { [self.dir.join("universal"), self.dir.join(crate::i18n::code())] }
     fn texts(&self, file: &str, section: Option<&str>) -> Vec<String> {
         self.dirs().iter().flat_map(|d| lines(&d.join(file), section)).collect()
+    }
+    /// Internet picture sources from `online.txt` in universal + the current language.
+    pub fn online_sources(&self) -> Vec<crate::online::Source> {
+        self.dirs().iter().flat_map(|d| crate::online::parse_sources(&std::fs::read_to_string(d.join("online.txt")).unwrap_or_default())).collect()
     }
     fn pool(&self, sub: &str, ext: &str) -> Vec<PathBuf> {
         self.dirs().iter().flat_map(|d| files(&d.join(sub), ext)).collect()
@@ -557,7 +510,7 @@ impl App {
         let Some(k) = kind.or_else(|| pick(&enabled)) else { return };
         match k {
             0 | 1 => {
-                if k == 1 && self.pranks.pool("pictures", "png").is_empty() { self.dbg("pictures: none found"); return; }
+                if k == 1 && self.pranks.pool("pictures", "png").is_empty() && !self.online.ready() { self.dbg("pictures: none found"); return; }
                 let Some(i) = self.free_pet(true) else { self.dbg("notes/pictures: no free pet on the floor"); return };
                 let work = self.world.monitors[self.pets[i].m.st.monitor].work;
                 let x = self.pets[i].m.st.anchor.0;
@@ -708,7 +661,16 @@ impl App {
                     if fin && !done { let a = m.st.anchor.0; self.dbg(&format!("edge run ended at x={a}, wanted {edge}")); }
                     if done {
                         let gfx = if meme {
-                            pick(&self.pranks.pool("pictures", "png")).and_then(|f| meme_gfx(&f, s))
+                            // fresh internet pictures when ready, mixed with the local ones
+                            let local = self.pranks.pool("pictures", "png");
+                            if self.online.ready() && (local.is_empty() || random() < 0.6) {
+                                let pic = self.online.take();
+                                self.dbg(&format!("picture from the internet: {:?}", pic.as_ref().map(|p| (p.w, p.h))));
+                                pic.and_then(|p| meme_gfx_rgba(p.w, p.h, &p.rgba, s))
+                            } else {
+                                self.dbg("picture from disk");
+                                pick(&local).and_then(|f| meme_gfx(&f, s))
+                            }
                         } else {
                             pick(&self.pranks.texts("notes.txt", None)).map(|l| note_gfx(&l, s))
                         };

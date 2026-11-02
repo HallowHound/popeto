@@ -10,6 +10,8 @@ pub struct Pranks {
     pub level: u8,
     pub notes: bool,
     pub memes: bool,
+    /// Also fetch fresh pictures from the internet for the pictures prank.
+    pub online: bool,
     pub footprints: bool,
     pub cursor: bool,
     pub talk: bool,
@@ -104,6 +106,7 @@ impl Settings {
                 "pranklevel" => s.pranks.level = match v.to_ascii_lowercase().as_str() { "calm" => 0, "chaos" => 2, _ => 1 },
                 "pranknotes" => s.pranks.notes = b(v),
                 "prankpictures" => s.pranks.memes = b(v),
+                "prankonlinepictures" => s.pranks.online = b(v),
                 "prankfootprints" => s.pranks.footprints = b(v),
                 "prankcursor" => s.pranks.cursor = b(v),
                 "pranktalk" => s.pranks.talk = b(v),
@@ -154,23 +157,14 @@ impl Settings {
         o += "; Windows pets ignore: exe names (without .exe) or parts of window titles, comma separated\n";
         o += &format!("IgnoreWindows={}\n\n", self.blacklist.join(","));
         let p = &self.pranks;
-        o += "; Pranks (all off by default). Texts, pictures and sounds live in the pranks folder.
-";
-        o += &format!("PrankLevel={}
-", ["calm", "normal", "chaos"][p.level.min(2) as usize]);
-        o += &format!("PrankNotes={}
-PrankPictures={}
-PrankFootprints={}
-PrankCursor={}
-PrankTalk={}
-PrankHonk={}
-PrankWindows={}
-", p.notes, p.memes, p.footprints, p.cursor, p.talk, p.honk, p.windows);
-        o += "; Hotkey that hides all pets and stops pranks (press again to bring them back)
-";
-        o += &format!("PanicKey={}
-
-", self.panic_key);
+        o += "; Pranks (all off by default). Texts, pictures and sounds live in the pranks folder.\n";
+        o += &format!("PrankLevel={}\n", ["calm", "normal", "chaos"][p.level.min(2) as usize]);
+        o += &format!("PrankNotes={}\nPrankPictures={}\nPrankFootprints={}\nPrankCursor={}\nPrankTalk={}\nPrankHonk={}\nPrankWindows={}\n",
+            p.notes, p.memes, p.footprints, p.cursor, p.talk, p.honk, p.windows);
+        o += "; Pictures prank also brings fresh pictures from the internet (sources: pranks\\*\\online.txt)\n";
+        o += &format!("PrankOnlinePictures={}\n", p.online);
+        o += "; Hotkey that hides all pets and stops pranks (press again to bring them back)\n";
+        o += &format!("PanicKey={}\n\n", self.panic_key);
         o += "; Behaviours switched off per pet (right click a pet > Allowed behaviours)\n";
         let mut keys: Vec<_> = self.disabled.keys().collect();
         keys.sort();

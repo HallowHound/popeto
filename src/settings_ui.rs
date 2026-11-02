@@ -54,7 +54,7 @@ struct NmHdr { from: HWND, id: usize, code: u32 }
 enum F {
     Size, Filter, Opacity, MaxPets, Lang, Chooser, Sounds, Cloning, Unique,
     Interact, Throw, Keep, Shake, HideFs, FsShow, Ignore,
-    Notes, Pictures, Prints, Cursor, Talk, Honk, Wins, Level, Panic,
+    Notes, Pictures, Online, Prints, Cursor, Talk, Honk, Wins, Level, Panic,
 }
 
 struct Ctl { h: HWND, f: Option<F> }
@@ -290,6 +290,7 @@ pub fn open(s: &Settings, icon: HICON) {
         b.gap(2);
         b.check(t("Bring notes"), F::Notes, p.notes);
         b.check(t("Bring pictures"), F::Pictures, p.memes);
+        b.check(t("    ...also fresh ones from the internet (not saved)"), F::Online, p.online);
         b.check(t("Leave muddy footprints"), F::Prints, p.footprints);
         b.check(t("Grab the mouse cursor (shake the mouse to escape)"), F::Cursor, p.cursor);
         b.check(t("Speech bubbles"), F::Talk, p.talk);
@@ -360,6 +361,7 @@ pub fn read(base: &Settings) -> Option<Settings> {
             F::Ignore => s.blacklist = list(&text_of(h)),
             F::Notes => s.pranks.notes = on,
             F::Pictures => s.pranks.memes = on,
+            F::Online => s.pranks.online = on,
             F::Prints => s.pranks.footprints = on,
             F::Cursor => s.pranks.cursor = on,
             F::Talk => s.pranks.talk = on,

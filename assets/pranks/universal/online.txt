@@ -1,0 +1,8 @@
+# Fresh pictures from the internet (Settings > Pranks). Kept in memory only, never saved.
+# One source per line:
+#   reddit <subreddit>      a random picture post (via meme-api.com); adult and spoiler posts are skipped
+#   json <url> <field>      any API answering JSON with a picture link in <field>
+#   image <url>             a URL that returns a random PNG/JPEG picture
+# Absurd design fails and weird pictures, mostly without text:
+reddit CrappyDesign
+reddit blursedimages

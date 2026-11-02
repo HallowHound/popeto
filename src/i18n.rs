@@ -83,6 +83,7 @@ pub fn t(s: &'static str) -> &'static str {
         "Chaos" => "Хаос",
         "Bring notes" => "Приносить записки",
         "Bring pictures" => "Приносить картинки",
+        "    ...also fresh ones from the internet (not saved)" => "    ...и свежие из интернета (не сохраняются)",
         "Muddy footprints" => "Грязные следы",
         "Grab the cursor (shake mouse to escape)" => "Хватать курсор (потрясите мышь, чтобы вырваться)",
         "Speech bubbles" => "Реплики",

@@ -1,4 +1,5 @@
 # Speech bubbles. Lines under [section] are used for that moment.
+# Sections: [random] [petted] [thrown] [grab] [free] [note] [window]
 [random]
 Hi!
 Bored...
@@ -8,24 +9,60 @@ Nice window.
 Can I help?
 I see you.
 Ooh, a cursor!
+Got any snacks?
+Can I have some too?
+I'm the boss here.
+Shhh...
+What a day.
+Working? Good job.
+Let's play!
+I'll just sit here.
+What does this button do?
+Oops.
+Hmmm...
+Who's there?
+Don't mind me.
+I didn't touch anything!
+Walk time!
+How long are you going to work?
 [petted]
 Hehe
 More!
 <3
+Purr...
+Nice!
+Right there!
+Best human!
+That tickles!
 [thrown]
 Wheee!
 Hey!!
 Not again!
+I'm flyyyying!
+Careful!
+Again!
+What was that for?!
 [grab]
 Mine!
 Gotcha!
 Let's go this way.
+Not giving it back!
+This is my cursor now.
+Wanna ride?
 [free]
 Fine, take it.
 Spoilsport.
+Whatever.
+Next time I won't let go.
 [note]
 Delivery!
 Read it!
+This is for you.
+Important message!
+Sign here, please.
 [window]
 Bye bye window!
 Boing boing!
+That window was in my way.
+Oops.
+Much better.

@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 png = "0.17"
 roxmltree = "0.20"
+jpeg-decoder = { version = "0.3", default-features = false }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dependencies.windows-sys]
@@ -26,6 +27,7 @@ features = [
   "Win32_Globalization",
   "Win32_UI_Controls_Dialogs",
   "Win32_System_DataExchange",
+  "Win32_Networking_WinHttp",
 ]
 
 [profile.release]

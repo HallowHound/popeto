@@ -38,6 +38,9 @@ popeto.ini is created on first run; popeto.log lists pack problems if a pet does
 Pranks (tray > Pranks, everything OFF until you tick it)
   Bring notes        pets walk off-screen and drag back a sticky note (notes.txt, one per line)
   Bring pictures     same with random .png pictures (pictures folder)
+    ...also fresh ones from the internet: random funny pictures and memes, kept in memory only and
+    never saved. Sources are listed in online.txt (reddit <subreddit>, json <url> <field>, image <url>);
+    adult and spoiler posts are skipped. Off by default.
   Muddy footprints   walking pets leave fading paw prints
   Grab the cursor    a pet jumps on your mouse pointer and drags it around - shake the mouse to escape
   Speech bubbles     random lines and reactions (talk.txt, [sections] per moment)
