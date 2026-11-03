@@ -135,6 +135,7 @@ const ID_KEEP_VISITOR: usize = 26;
 const ID_SEND_HOME: usize = 27;
 const ID_VISIT_ANY: usize = 28;
 const ID_VISIT: usize = 4200;
+const ID_VISIT_MSG: usize = 4300;
 const ID_ADD_PETS: usize = 19;
 const ID_PRANK_LEVEL: usize = 40;
 const ID_PRANK_TOGGLE: usize = 50;
@@ -590,6 +591,11 @@ impl App {
                     for (k, (n, _)) in peers.iter().enumerate() { vm.item(ID_VISIT + k, n, false); }
                 }
                 m.sub(t("Go visiting"), vm);
+                let mm = Menu::new();
+                if peers.is_empty() { mm.disabled(t("No other PCs found")); } else {
+                    for (k, (n, _)) in peers.iter().enumerate() { mm.item(ID_VISIT_MSG + k, n, false); }
+                }
+                m.sub(t("Send with a message"), mm);
             }
         }
         m.item(ID_CHASE, t("Follow cursor"), false)
@@ -617,9 +623,15 @@ impl App {
         } else if id >= ID_BEHAVE && id < ID_BEHAVE + names.len() {
             self.set_behavior(i, &names[id - ID_BEHAVE]);
         } else if id >= ID_VISIT && id < ID_VISIT + peers.len() {
-            self.go_visit(i, Some(peers[id - ID_VISIT].1));
+            self.go_visit(i, Some(peers[id - ID_VISIT].1), None);
+        } else if id >= ID_VISIT_MSG && id < ID_VISIT_MSG + peers.len() {
+            let (n, addr) = &peers[id - ID_VISIT_MSG];
+            if let Some(m) = win::input_box(owner, t("Message"), &tf("Message for {}:", &[n]), "") {
+                let m = m.trim().chars().take(lan::MAX_MSG).collect::<String>();
+                if !m.is_empty() { self.go_visit(i, Some(*addr), Some(m)); }
+            }
         } else if id == ID_VISIT_ANY {
-            self.go_visit(i, None);
+            self.go_visit(i, None, None);
         } else if id == ID_SEND_HOME {
             if let Some(l) = &mut self.lan { l.send_home(pid); }
         } else if id == ID_KEEP_VISITOR {

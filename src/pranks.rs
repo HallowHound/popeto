@@ -541,6 +541,24 @@ impl App {
         self.show_note(&text);
     }
 
+    /// This pet walks into the screen dragging a note (a LAN message). Without a walk the note just appears.
+    pub fn carry_note(&mut self, pet: u32, text: &str) {
+        let s = self.ui_scale();
+        if let Some(i) = self.pet_index(pet) {
+            let gfx = note_gfx(text, s);
+            let work = self.world.monitors[self.pets[i].m.st.monitor.min(self.world.monitors.len() - 1)].work;
+            let dest = work.l + gfx.w + 60 + (random() * (work.w() - 2 * gfx.w - 120).max(1) as f64) as i32;
+            let ds = dest.to_string();
+            if self.run_on(i, &ACT_WALK, &[("TargetX", &ds)], "#prank-bring") {
+                let ov = Overlay::new(gfx, false, (34.0 * s) as i32);
+                self.pranks.jobs.push(Job::Bring { pet, ov, dest });
+                return;
+            }
+            unsafe { DeleteObject(gfx.bmp); }
+        }
+        self.show_note(text);
+    }
+
     /// Put a note near the bottom middle of the main screen.
     pub fn show_note(&mut self, text: &str) {
         let s = self.ui_scale();

@@ -30,15 +30,15 @@ enum NetEv {
 }
 
 /// Our pet away on a visit.
-struct Away { pack: String, peer: SocketAddr, side: char, welcome_by: u64, welcomed: bool, deadline: u64 }
+struct Away { pack: String, peer: SocketAddr, side: char, welcome_by: u64, welcomed: bool, deadline: u64, msg: Option<String> }
 
 /// Someone else's pet visiting us.
 struct Visitor { vid: u64, origin: SocketAddr, enter: char, until: u64, name: String, tries: u32 }
 
 /// A pet walking to the screen edge to leave.
-struct Leave { side: char, edge: i32, to: Option<SocketAddr>, ticks: u32 }
+struct Leave { side: char, edge: i32, to: Option<SocketAddr>, ticks: u32, msg: Option<String> }
 
-struct Arrival { from: SocketAddr, origin: String, pack: String, side: char, name: String }
+struct Arrival { from: SocketAddr, origin: String, pack: String, side: char, name: String, msg: Option<String> }
 
 pub struct Lan {
     id: u64,
@@ -63,6 +63,15 @@ pub struct Lan {
 impl Drop for Lan { fn drop(&mut self) { self.stop.store(true, Ordering::Relaxed); } }
 
 fn clean(s: &str) -> String { s.replace(['|', '\n', '\r'], " ").chars().take(60).collect() }
+
+/// Longest message a pet carries (fits a UDP packet even in Cyrillic).
+pub const MAX_MSG: usize = 300;
+
+/// Message text inside a `|`-separated packet.
+fn enc(s: &str) -> String {
+    s.chars().take(MAX_MSG).filter(|&c| c != '\r').map(|c| match c { '%' => "%25".into(), '|' => "%7C".into(), '\n' => "%0A".into(), c => c.to_string() }).collect()
+}
+fn dec(s: &str) -> String { s.replace("%0A", "\n").replace("%7C", "|").replace("%25", "%") }
 
 fn opposite(c: char) -> char { if c == 'L' { 'R' } else { 'L' } }
 
@@ -259,8 +268,8 @@ impl App {
         if side == 'L' { (w.l, w.b, 1) } else { (w.r, w.b, -1) }
     }
 
-    /// Send one of our pets to visit `to` (None = any PC that's around).
-    pub fn go_visit(&mut self, i: usize, to: Option<SocketAddr>) {
+    /// Send one of our pets to visit `to` (None = any PC that's around), optionally carrying a message.
+    pub fn go_visit(&mut self, i: usize, to: Option<SocketAddr>, msg: Option<String>) {
         let Some(lan) = &self.lan else { return };
         let to = to.or_else(|| pick(&lan.peers.iter().map(|p| p.addr).collect::<Vec<_>>()));
         let Some(to) = to else { return };
@@ -275,7 +284,7 @@ impl App {
         self.lan_dbg(&format!("pet {id} heads to the {side} edge to visit {to}: {ok}"));
         if ok {
             self.say_always(id, "visit");
-            self.lan.as_mut().unwrap().leaving.insert(id, Leave { side, edge, to: Some(to), ticks: 0 });
+            self.lan.as_mut().unwrap().leaving.insert(id, Leave { side, edge, to: Some(to), ticks: 0, msg });
         }
     }
 
@@ -348,9 +357,10 @@ impl App {
                     let vid = (random() * 1e15) as u64 + 1;
                     lan.serve.lock().unwrap().insert(pack.clone());
                     let mine = self.settings.names.get(&pack).cloned().unwrap_or_default();
-                    for _ in 0..2 { lan.send(to, format!("VISIT|{}|{vid}|{}|{}|{}", lan.id, clean(&pack), opposite(l.side), clean(&mine))); }
+                    let msg = l.msg.as_deref().map(enc).unwrap_or_default();
+                    for _ in 0..2 { lan.send(to, format!("VISIT|{}|{vid}|{}|{}|{}|{msg}", lan.id, clean(&pack), opposite(l.side), clean(&mine))); }
                     let mins = self.settings.lan.minutes.max(1) as u64;
-                    lan.away.insert(vid, Away { pack, peer: to, side: l.side, welcome_by: t + 200, welcomed: false, deadline: t + (mins + 3) * 60 * 40 });
+                    lan.away.insert(vid, Away { pack, peer: to, side: l.side, welcome_by: t + 200, welcomed: false, deadline: t + (mins + 3) * 60 * 40, msg: l.msg });
                     self.lan_dbg(&format!("pet {id} left for {to} (visit {vid})"));
                 }
                 None => {
@@ -394,7 +404,7 @@ impl App {
                     let es = edge.to_string();
                     if self.run_on(i, &ACT_WALK, &[("TargetX", &es)], "#lan-leave") {
                         if tries == 0 { self.say_always(id, "bye"); }
-                        lan.leaving.insert(id, Leave { side, edge, to: None, ticks: 0 });
+                        lan.leaving.insert(id, Leave { side, edge, to: None, ticks: 0, msg: None });
                     }
                 }
             }
@@ -414,7 +424,7 @@ impl App {
             if lan.next_auto != 0 {
                 let own: Vec<usize> = (0..self.pets.len()).filter(|&i| !lan.visitors.contains_key(&self.pets[i].m.id) && !lan.leaving.contains_key(&self.pets[i].m.id) && (self.pet_free(i) || self.settings.debug)).collect();
                 // leave at least one pet at home
-                if own.len() > 1 { if let Some(i) = pick(&own) { self.lan = Some(lan); self.go_visit(i, None); lan = self.lan.take().unwrap(); } }
+                if own.len() > 1 { if let Some(i) = pick(&own) { self.lan = Some(lan); self.go_visit(i, None, None); lan = self.lan.take().unwrap(); } }
             }
             lan.next_auto = t + if self.settings.debug { 40 * 25 } else { 40 * 60 * (4 + (random() * 6.0) as u64) };
         }
@@ -424,7 +434,13 @@ impl App {
     fn come_home(&mut self, lan: &mut Lan, a: Away, side: char) {
         lan.serve.lock().unwrap().remove(&a.pack);
         if let Some(pk) = self.pack_index(&a.pack) {
-            if let Some(id) = self.walk_in(pk, side) { self.say_always(id, "back"); }
+            let Some(id) = self.walk_in(pk, side) else { return };
+            match &a.msg {
+                Some(_) if a.welcomed => self.say_text(id, crate::i18n::t("Message delivered!"), 160),
+                // nobody took it: bring the message back to you
+                Some(m) => { self.say_text(id, crate::i18n::t("Nobody was there, so I brought your message back"), 200); self.show_note(m); }
+                None => self.say_always(id, "back"),
+            }
         }
     }
 
@@ -438,7 +454,8 @@ impl App {
                 if !valid_pack_name(&pack) { return; }
                 lan.send(from, format!("WELCOME|{}|{vid}", lan.id));
                 let origin = lan.peer_name(from);
-                let a = Arrival { from, origin, pack: pack.clone(), side, name: m.get(5).cloned().unwrap_or_default() };
+                let msg = m.get(6).map(|s| dec(s)).filter(|s| !s.trim().is_empty());
+                let a = Arrival { from, origin, pack: pack.clone(), side, name: m.get(5).cloned().unwrap_or_default(), msg };
                 if self.pack_index(&pack).is_some() { self.arrive(lan, vid, a); return; }
                 // fetch the pet first
                 self.lan_dbg(&format!("fetching {pack} from {from}"));
@@ -488,9 +505,15 @@ impl App {
         let mins = self.settings.lan.minutes.max(1) as u64;
         lan.visitors.insert(id, Visitor { vid, origin: a.from, enter: a.side, until: self.tick_n + mins * 60 * 40, name: a.name.clone(), tries: 0 });
         self.lan_dbg(&format!("visitor {} from {} arrived as pet {id}", a.pack, a.origin));
+        self.emote(id, crate::life::Emote::Heart);
+        if let Some(m) = &a.msg {
+            // carry the note in instead of the usual stroll
+            self.carry_note(id, m);
+            self.say_text(id, &tf("A message from {}!", &[&a.origin]), 200);
+            return;
+        }
         let hi = tf("Hi! I'm visiting from {}", &[&a.origin]);
         self.say_text(id, &hi, 200);
-        self.emote(id, crate::life::Emote::Heart);
     }
 
     /// Visitors leave right away (Popeto closing, LAN switched off).
@@ -525,5 +548,13 @@ mod tests {
         let (p, _) = crate::config::load_pack(&root, &dest, 1.0).expect("load");
         assert!(!p.images.is_empty() && !p.behaviors.is_empty());
         let _ = std::fs::remove_dir_all(dest.parent().unwrap());
+    }
+
+    #[test]
+    fn message_survives_the_packet() {
+        let m = "50% off | today\nПривет";
+        let e = super::enc(m);
+        assert!(!e.contains('|') && !e.contains('\n'));
+        assert_eq!(super::dec(&e), m);
     }
 }
