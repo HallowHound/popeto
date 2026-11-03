@@ -491,3 +491,14 @@ pub fn discover(root: &Path) -> Vec<PathBuf> {
     v.sort();
     v
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn default_pet_loads() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        let (p, warnings) = super::load_pack(&root, &root.join("pets").join("Popi"), 1.0).expect("load");
+        assert!(!p.images.is_empty() && !p.behaviors.is_empty());
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+}

@@ -65,7 +65,7 @@ click **More info > Run anyway**.
    ```
 
    This builds `target\release\popeto.exe` and assembles the portable folder `dist\Popeto`
-   (Popeto.exe, README.txt, LICENSE.txt, pranks\, empty img\). `cargo build --release` alone builds just the exe;
+   (Popeto.exe, README.txt, LICENSE.txt, pranks\, img\ with Popi). `cargo build --release` alone builds just the exe;
    `cargo test` runs the tests.
 
 The exe is statically linked (`+crt-static`, see `.cargo/config.toml`), so it needs no runtime on other PCs.
@@ -93,7 +93,8 @@ pranks\universal\     notes.txt, talk.txt, pictures\, sounds\  (any language)
 pranks\en\, ru\       notes.txt, talk.txt, pictures\            (that language only)
 ```
 
-Pet packs are not part of this repo; they belong to their artists. Get Shimeji / Shimeji-ee packs and add
+Popeto comes with one simple pet of its own, **Popi** (`assets/pets/Popi`, drawn by
+`scripts/make_default_pet.py`, MIT like the code). Other pet packs are not part of this repo; they belong to their artists. Get Shimeji / Shimeji-ee packs and add
 them with **tray > Add pets from Shimeji zip...**
 
 ## Source map
