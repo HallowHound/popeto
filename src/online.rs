@@ -117,7 +117,7 @@ fn fetch(src: &Source) -> Result<Pic, String> {
 }
 
 /// First string value of `"field": "..."` anywhere in the JSON text, unescaped.
-fn json_str(text: &str, field: &str) -> Option<String> {
+pub(crate) fn json_str(text: &str, field: &str) -> Option<String> {
     let key = format!("\"{field}\"");
     let mut from = 0;
     while let Some(i) = text[from..].find(&key) {

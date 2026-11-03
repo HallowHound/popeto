@@ -20,6 +20,7 @@ mod online;
 mod pranks;
 mod settings;
 mod settings_ui;
+mod update;
 mod win;
 
 use config::Pack;
@@ -93,6 +94,7 @@ struct App {
     downloads: downloads::Watcher,
     life: life::Life,
     extras: extras::Extras,
+    update: update::Updater,
     lan: Option<lan::Lan>,
     /// Shimeji zips found in Downloads, waiting for the user to add them.
     pending: Vec<(std::path::PathBuf, Vec<String>)>,
@@ -130,6 +132,8 @@ const ID_TOY_LASER: usize = 69;
 const ID_TOY_CHALK: usize = 100;
 const ID_TIMER: usize = 110;
 const ID_TIMER_CANCEL: usize = 120;
+const ID_CHECK_UPDATE: usize = 130;
+const ID_INSTALL_UPDATE: usize = 131;
 const ID_NAME: usize = 25;
 const ID_KEEP_VISITOR: usize = 26;
 const ID_SEND_HOME: usize = 27;
@@ -198,6 +202,7 @@ impl App {
             downloads: downloads::Watcher::new(),
             life: life::Life::default(),
             extras: extras::Extras::default(),
+            update: update::Updater::default(),
             lan: None,
             pending: vec![],
         }
@@ -445,7 +450,10 @@ impl App {
             Ev::Tray(msg) => match msg {
                 win::MSG_RUP | win::MSG_CTX => self.tray_menu(),
                 win::MSG_LDBL => self.summon_random(),
-                win::MSG_BALLOON_CLICK => if !self.pending.is_empty() { let (p, _) = self.pending.remove(0); self.import_from(&p); },
+                win::MSG_BALLOON_CLICK => {
+                    if std::mem::take(&mut self.update.balloon) { self.install_update(); }
+                    else if !self.pending.is_empty() { let (p, _) = self.pending.remove(0); self.import_from(&p); }
+                }
                 _ => {}
             },
             Ev::TaskbarCreated => win::tray(self.tray, self.icon, win::TRAY_ADD),
@@ -537,6 +545,9 @@ impl App {
             m.item(ID_PENDING + k, &tf("Add downloaded pet: {}", &[&names.join(", ")]), false);
         }
         if !self.pending.is_empty() { m.sep(); }
+        if let Some(r) = &self.update.available {
+            m.item(ID_INSTALL_UPDATE, &tf("Update to {}", &[&r.tag]), false).sep();
+        }
         m
             .item(ID_SETTINGS_WINDOW, t("Settings..."), false)
             .item(ID_CHOOSE, t("Choose pets..."), false)
@@ -555,6 +566,7 @@ impl App {
             .item(ID_FOLDER, t("Open pets folder"), false)
             .item(ID_SETTINGS, t("Edit settings file"), false)
             .item(ID_RELOAD, t("Reload pets"), false)
+            .item(ID_CHECK_UPDATE, &tf("Check for updates (now {})", &[&update::VERSION]), false)
             .sep()
             .item(ID_EXIT, t("Exit"), false);
         let id = m.run(self.tray);
@@ -646,6 +658,8 @@ impl App {
         let s = &mut self.settings;
         match id {
             ID_EXIT => self.quit = true,
+            ID_CHECK_UPDATE => self.check_updates(true),
+            ID_INSTALL_UPDATE => self.install_update(),
             ID_DISMISS_ALL => while !self.pets.is_empty() { self.remove(0); },
             ID_RESTORE => {
                 for (h, (l, t)) in self.originals.drain() { win::move_app_window(h, l, t); }
@@ -828,6 +842,7 @@ impl App {
         self.life_after();
         self.extras_tick();
         self.lan_tick();
+        self.update_tick();
         self.render();
         // fullscreen apps like RDP sit in the topmost band too, so re-assert often while one is up
         if self.tick_n % if self.fs_visible.is_some() { 8 } else { 80 } == 0 { self.restack(); }
@@ -1060,6 +1075,8 @@ fn main() {
     unsafe {
         windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(windows_sys::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let name = win::wide("Local\\PopetoDesktopPets");
+        let updated = std::env::args().any(|a| a == "--updated");
+        if updated { update::after_update(&name); }
         CreateMutexW(null(), 0, name.as_ptr());
         if GetLastError() == ERROR_ALREADY_EXISTS {
             // dragged a zip onto Popeto.exe while it runs: hand it over to the running one
@@ -1100,6 +1117,7 @@ fn main() {
     if std::env::args().any(|a| a == "--settings") { settings_ui::open(&app.settings, app.icon); }
     if let Some(p) = std::env::args().nth(1).filter(|a| !a.starts_with("--")) { app.import_from(std::path::Path::new(&p)); }
     if let Some(r) = remote_arg() { app.extras.remote.push(r); }
+    if std::env::args().any(|a| a == "--updated") { app.extras.remote.push(("say".into(), tf("Updated to {}!", &[&update::VERSION]))); }
 
     unsafe {
         // high resolution timer so 40 fps really is 40 fps (default Windows timers tick at ~15.6ms)

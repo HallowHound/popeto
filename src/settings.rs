@@ -86,6 +86,8 @@ pub struct Settings {
     pub unique_pets: bool,
     /// Offer to import Shimeji zips that appear in the Downloads folder.
     pub watch_downloads: bool,
+    /// Look for new Popeto versions on GitHub (updating still asks).
+    pub check_updates: bool,
     pub debug: bool,
     pub show_chooser: bool,
     /// No ini existed before this run.
@@ -122,6 +124,7 @@ impl Settings {
             cloning: true,
             unique_pets: false,
             watch_downloads: true,
+            check_updates: true,
             debug: false,
             show_chooser: false,
             fresh: !path.exists(),
@@ -157,6 +160,7 @@ impl Settings {
                 "cloning" => s.cloning = b(v),
                 "uniquepets" => s.unique_pets = b(v),
                 "watchdownloads" => s.watch_downloads = b(v),
+                "checkupdates" => s.check_updates = b(v),
                 "debug" => s.debug = b(v),
                 "showpetchooser" => s.show_chooser = b(v),
                 "pranklevel" => s.pranks.level = match v.to_ascii_lowercase().as_str() { "calm" => 0, "chaos" => 2, _ => 1 },
@@ -234,6 +238,8 @@ impl Settings {
         o += &format!("UniquePets={}\n", self.unique_pets);
         o += "; Offer to add Shimeji zips that appear in the Downloads folder\n";
         o += &format!("WatchDownloads={}\n", self.watch_downloads);
+        o += "; Look for new Popeto versions on GitHub; updating asks first (tray > Update to ...)\n";
+        o += &format!("CheckUpdates={}\n", self.check_updates);
         o += "; Windows pets ignore: exe names (without .exe) or parts of window titles, comma separated\n";
         o += &format!("IgnoreWindows={}\n\n", self.blacklist.join(","));
         let p = &self.pranks;

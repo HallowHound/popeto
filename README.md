@@ -52,6 +52,10 @@ Get `Popeto-<version>.zip` from [Releases](../../releases), unzip it anywhere an
 The exe isn't code-signed, so on first launch Windows SmartScreen may say "Windows protected your PC":
 click **More info > Run anyway**.
 
+Popeto checks GitHub for new versions (once a start and every 12 hours, switch off in Settings > General).
+When one is out, click the tray notification or **tray > Update to ...**: only `Popeto.exe` is replaced, your pets,
+pranks and settings stay, and Popeto restarts by itself.
+
 ## Build it yourself
 
 1. Install [Rust](https://rustup.rs/) with the default MSVC toolchain (`x86_64-pc-windows-msvc`).
