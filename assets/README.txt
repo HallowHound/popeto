@@ -65,6 +65,20 @@ Life (Settings > Life; on by default except pushing windows)
   release a balloon (pets jump for it; click to pop), put a bed (pets nap on it). Drag cookies and
   the bed around; right click a toy to remove it.
 
+Extras (Settings > Extras)
+  Reminders: take a break after N minutes at the computer, drink water every N minutes (0 = off).
+  Timer: tray > Timer > 5..60 min; a pet brings a note when it rings.
+  Scripts: Popeto.exe --say "Build done" (speech bubble) or --note "text" (a pet brings a note).
+  Pets dance while music plays, stand on desktop icons, and show their name on mouse over
+  (right click a pet > Name...). Toys: laser pointer (pets chase the red dot), chalk (pets draw).
+
+LAN visits (Settings > Network, off by default)
+  Pets walk off your screen to another PC running Popeto on the same network, stay a few minutes and
+  come back. Right click a pet > Go visiting, or let them go by themselves. If the other PC doesn't have
+  that pet, it is sent over the network for the visit (visitors folder); right click a guest > Keep a copy.
+  Uses port 47811 (UDP + TCP); Windows may ask to allow Popeto in the firewall. If PCs don't find each
+  other (office networks), type their addresses in Settings > Network.
+
 Panic key (default Ctrl+Shift+F12, PanicKey= in popeto.ini): hides every pet and stops all pranks;
 press again to bring them back. No keyboard/mouse hooks are used.
 

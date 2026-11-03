@@ -32,12 +32,36 @@ pub struct Life {
     pub daytime: bool,
     pub emotes: bool,
     pub talk: bool,
+    /// Pets dance while music plays.
+    pub dance: bool,
+    /// Desktop icons are platforms pets can stand on.
+    pub icons: bool,
+    /// Show a pet's name when the mouse is over it.
+    pub show_names: bool,
+    /// Break reminder after this many minutes at the computer (0 = off).
+    pub break_minutes: u32,
+    /// Drink-water reminder every this many minutes (0 = off).
+    pub water_minutes: u32,
 }
 
 impl Default for Life {
     fn default() -> Self {
-        Life { stacking: true, meet: true, games: true, hide: true, push: false, sleep: true, sleep_minutes: 5, daytime: true, emotes: true, talk: true }
+        Life { stacking: true, meet: true, games: true, hide: true, push: false, sleep: true, sleep_minutes: 5, daytime: true, emotes: true, talk: true, dance: true, icons: true, show_names: true, break_minutes: 0, water_minutes: 0 }
     }
+}
+
+/// Pets visiting other PCs on the local network.
+#[derive(Clone, PartialEq)]
+pub struct Lan {
+    pub on: bool,
+    /// Pets go visiting by themselves now and then.
+    pub auto: bool,
+    /// How long a visit lasts.
+    pub minutes: u32,
+    /// Addresses of other PCs, for networks where broadcasts don't get through.
+    pub peers: Vec<String>,
+    /// How this PC is called on the other screens ("" = computer name).
+    pub name: String,
 }
 
 #[derive(Clone)]
@@ -74,6 +98,9 @@ pub struct Settings {
     pub panic_key: String,
     /// Interface and prank-text language: "auto" or a code like "en", "ru".
     pub language: String,
+    /// Names given to pets, per pet kind (folder name -> name).
+    pub names: HashMap<String, String>,
+    pub lan: Lan,
 }
 
 impl Settings {
@@ -104,6 +131,8 @@ impl Settings {
             life: Life::default(),
             panic_key: "Ctrl+Shift+F12".into(),
             language: "auto".into(),
+            names: HashMap::new(),
+            lan: Lan { on: false, auto: true, minutes: 5, peers: vec![], name: String::new() },
         };
         let text = std::fs::read_to_string(path).unwrap_or_default();
         let b = |v: &str| matches!(v.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes" | "on");
@@ -150,10 +179,22 @@ impl Settings {
                 "lifetimeofday" => s.life.daytime = b(v),
                 "lifeemotes" => s.life.emotes = b(v),
                 "lifetalk" => s.life.talk = b(v),
+                "lifedance" => s.life.dance = b(v),
+                "lifedesktopicons" => s.life.icons = b(v),
+                "lifeshownames" => s.life.show_names = b(v),
+                "breakreminderminutes" => s.life.break_minutes = v.parse().unwrap_or(0).min(600),
+                "waterreminderminutes" => s.life.water_minutes = v.parse().unwrap_or(0).min(600),
                 "language" => s.language = v.to_lowercase(),
+                "lanvisits" => s.lan.on = b(v),
+                "lanvisitbythemselves" => s.lan.auto = b(v),
+                "lanvisitminutes" => s.lan.minutes = v.parse().unwrap_or(5).clamp(1, 240),
+                "lanpeers" => s.lan.peers = v.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect(),
+                "lanname" => s.lan.name = v.to_string(),
                 "ignorewindows" => s.blacklist = v.split(',').map(|x| x.trim().to_lowercase()).filter(|x| !x.is_empty()).collect(),
                 _ => {
-                    if let Some(pack) = k.strip_prefix("Disabled.") {
+                    if let Some(pack) = k.strip_prefix("Name.") {
+                        if !v.is_empty() { s.names.insert(pack.to_string(), v.to_string()); }
+                    } else if let Some(pack) = k.strip_prefix("Disabled.") {
                         s.disabled.insert(pack.to_string(), v.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect());
                     }
                 }
@@ -207,9 +248,21 @@ impl Settings {
         o += "; sleep when you are away (minutes), react to the time of day, show hearts/stars, talk\n";
         o += &format!("LifeStacking={}\nLifeMeet={}\nLifeGames={}\nLifeHide={}\nLifePushWindows={}\nLifeSleepWhenAway={}\nLifeSleepMinutes={}\nLifeTimeOfDay={}\nLifeEmotes={}\nLifeTalk={}\n",
             l.stacking, l.meet, l.games, l.hide, l.push, l.sleep, l.sleep_minutes, l.daytime, l.emotes, l.talk);
+        o += "; Dance to music, stand on desktop icons, show names on mouse over\n";
+        o += &format!("LifeDance={}\nLifeDesktopIcons={}\nLifeShowNames={}\n", l.dance, l.icons, l.show_names);
+        o += "; Reminders: a pet brings a note. Minutes, 0 = off. The break timer restarts when you are away 5+ minutes.\n";
+        o += &format!("BreakReminderMinutes={}\nWaterReminderMinutes={}\n", l.break_minutes, l.water_minutes);
+        let n = &self.lan;
+        o += "; LAN visits: pets walk to other PCs running Popeto on the same network (UDP/TCP port 47811)\n";
+        o += "; LanPeers: addresses of other PCs if they are not found automatically. LanName: empty = computer name\n";
+        o += &format!("LanVisits={}\nLanVisitByThemselves={}\nLanVisitMinutes={}\nLanPeers={}\nLanName={}\n", n.on, n.auto, n.minutes, n.peers.join(","), n.name);
         o += "; Hotkey that hides all pets and stops pranks (press again to bring them back)\n";
         o += &format!("PanicKey={}\n\n", self.panic_key);
-        o += "; Behaviours switched off per pet (right click a pet > Allowed behaviours)\n";
+        o += "; Pet names (right click a pet > Name...)\n";
+        let mut keys: Vec<_> = self.names.keys().collect();
+        keys.sort();
+        for k in keys { o += &format!("Name.{k}={}\n", self.names[k]); }
+        o += "\n; Behaviours switched off per pet (right click a pet > Allowed behaviours)\n";
         let mut keys: Vec<_> = self.disabled.keys().collect();
         keys.sort();
         for k in keys {

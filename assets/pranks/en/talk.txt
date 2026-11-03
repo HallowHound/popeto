@@ -120,3 +120,36 @@ Balloon!
 Move over!
 Pushing!
 This window is in the way.
+[break]
+Time for a break! Stand up and stretch.
+You've been working for ages. Rest your eyes!
+Break time! Look out of the window for a minute.
+Let's take a walk!
+[water]
+Drink some water!
+Water time! Stay hydrated.
+Have a glass of water, please.
+[timer]
+Time's up!
+Ding! The timer is done.
+Your timer rang!
+[laser]
+Red dot!
+I'll get it!
+Where did it go?!
+[chalk]
+Look what I drew!
+Art!
+Masterpiece.
+[visit]
+I'm going visiting!
+Be right back!
+Off to see a friend!
+[back]
+I'm back!
+Home sweet home!
+Missed me?
+[bye]
+Bye! Time to go home.
+Thanks for having me!
+See you!

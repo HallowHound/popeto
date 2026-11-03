@@ -115,7 +115,7 @@ fn card_alpha(card: (f32, f32, f32, f32), rad: f32, shadow: f32) -> impl Fn(f32,
 
 pub struct Gfx { pub bmp: HBITMAP, pub w: i32, pub h: i32 }
 
-fn note_gfx(text: &str, s: f64) -> Gfx {
+pub(crate) fn note_gfx(text: &str, s: f64) -> Gfx {
     let sc = |v: f64| (v * s).round() as i32;
     let mut probe = Canvas::new(8, 8);
     let (_, th) = probe.measure(text, sc(220.0), sc(17.0), false);
@@ -171,7 +171,7 @@ fn meme_gfx_rgba(iw: u32, ih: u32, rgba: &[u8], s: f64) -> Option<Gfx> {
     Some(Gfx { bmp: c.finish(card_alpha(card, 3.0, 9.0 * s as f32)), w, h })
 }
 
-fn bubble_gfx(text: &str, s: f64) -> Gfx {
+pub(crate) fn bubble_gfx(text: &str, s: f64) -> Gfx {
     let sc = |v: f64| (v * s).round() as i32;
     let mut probe = Canvas::new(8, 8);
     let (tw, th) = probe.measure(text, sc(200.0), sc(15.0), true);
@@ -346,7 +346,10 @@ pub fn ensure_files(root: &Path) -> PathBuf {
 }
 
 fn lines(path: &Path, section: Option<&str>) -> Vec<String> {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
+    parse_lines(&std::fs::read_to_string(path).unwrap_or_default(), section)
+}
+
+fn parse_lines(text: &str, section: Option<&str>) -> Vec<String> {
     let mut cur: Option<String> = None;
     text.lines()
         .map(|l| l.trim().trim_start_matches('\u{feff}'))
@@ -380,12 +383,12 @@ impl Overlay {
     pub(crate) fn close(self) { unsafe { DestroyWindow(self.hwnd); DeleteObject(self.gfx.bmp); } }
 }
 
-struct Bubble { pet: u32, ov: Overlay, ticks: u32 }
+struct Bubble { pet: u32, ov: Overlay, ticks: u32, life: u32 }
 struct Print { ov: Overlay, age: u32 }
 
 enum Job {
     /// Walk to the screen edge, then come back dragging a note.
-    ToEdge { pet: u32, edge: i32, meme: bool, ticks: u32 },
+    ToEdge { pet: u32, edge: i32, meme: bool, ticks: u32, text: Option<String> },
     Bring { pet: u32, ov: Overlay, dest: i32 },
     /// Jump at the cursor, then hang on it and drag it around.
     Leap { pet: u32, ticks: u32 },
@@ -428,14 +431,18 @@ pub(crate) const ACT_WALK: [&str; 2] = ["Walk", "Run"];
 impl Pranks {
     /// Content folders in use: universal + the current language.
     fn dirs(&self) -> [PathBuf; 2] { [self.dir.join("universal"), self.dir.join(crate::i18n::code())] }
-    fn texts(&self, file: &str, section: Option<&str>) -> Vec<String> {
-        self.dirs().iter().flat_map(|d| lines(&d.join(file), section)).collect()
+    pub(crate) fn texts(&self, file: &str, section: Option<&str>) -> Vec<String> {
+        let v: Vec<String> = self.dirs().iter().flat_map(|d| lines(&d.join(file), section)).collect();
+        if !v.is_empty() || file != "talk.txt" { return v; }
+        // a section added in a newer version is missing from the user's own talk.txt: use the built-in lines
+        let code = crate::i18n::code();
+        [UNIVERSAL_TALK, default_texts(code).1].iter().flat_map(|t| parse_lines(t, section)).collect()
     }
     /// Internet picture sources from `online.txt` in universal + the current language.
     pub fn online_sources(&self) -> Vec<crate::online::Source> {
         self.dirs().iter().flat_map(|d| crate::online::parse_sources(&std::fs::read_to_string(d.join("online.txt")).unwrap_or_default())).collect()
     }
-    fn pool(&self, sub: &str, ext: &str) -> Vec<PathBuf> {
+    pub(crate) fn pool(&self, sub: &str, ext: &str) -> Vec<PathBuf> {
         self.dirs().iter().flat_map(|d| files(&d.join(sub), ext)).collect()
     }
     pub fn new(root: &Path) -> Pranks { let mut p = Pranks::default(); p.dir = root.join("pranks"); p }
@@ -496,7 +503,7 @@ impl App {
     /// A random pet that is free, visible and standing on the bottom of the screen (or anything, if `any_place`).
     fn free_pet(&mut self, floor_only: bool) -> Option<usize> {
         let mut c: Vec<usize> = (0..self.pets.len())
-            .filter(|&i| { let p = &self.pets[i]; p.w.shown && !p.m.st.dragging && !p.m.holding && !self.pranks.busy(p.m.id) && !self.life.busy(p.m.id) })
+            .filter(|&i| self.pet_free(i))
             .collect();
         if floor_only { c.retain(|&i| self.floor_of(i) == BorderRef::Work(Side::Bottom)); }
         pick(&c)
@@ -509,9 +516,40 @@ impl App {
     /// Speech bubble regardless of the prank switch (life events have their own).
     pub fn say_always(&mut self, pet: u32, section: &str) {
         let Some(line) = pick(&self.pranks.texts("talk.txt", Some(section))) else { return };
+        self.say_text(pet, &line, 130);
+    }
+
+    /// Speech bubble with this exact text for `ticks` ticks.
+    pub fn say_text(&mut self, pet: u32, text: &str, ticks: u32) {
         if let Some(i) = self.pranks.bubbles.iter().position(|b| b.pet == pet) { self.pranks.bubbles.remove(i).ov.close(); }
-        let ov = Overlay::new(bubble_gfx(&line, self.ui_scale()), true, 0);
-        self.pranks.bubbles.push(Bubble { pet, ov, ticks: 0 });
+        let ov = Overlay::new(bubble_gfx(text, self.ui_scale()), true, 0);
+        self.pranks.bubbles.push(Bubble { pet, ov, ticks: 0, life: ticks });
+    }
+
+    /// A pet fetches a note with this text from the screen edge. Without a free pet the note just appears.
+    pub fn bring_note(&mut self, text: String) {
+        if let Some(i) = self.free_pet(true) {
+            let work = self.world.monitors[self.pets[i].m.st.monitor].work;
+            let x = self.pets[i].m.st.anchor.0;
+            let edge = if x - work.l < work.r - x { work.l } else { work.r };
+            let es = edge.to_string();
+            if self.run_on(i, &ACT_RUN, &[("TargetX", &es)], "#prank-edge") {
+                self.pranks.jobs.push(Job::ToEdge { pet: self.pets[i].m.id, edge, meme: false, ticks: 0, text: Some(text) });
+                return;
+            }
+        }
+        self.show_note(&text);
+    }
+
+    /// Put a note near the bottom middle of the main screen.
+    pub fn show_note(&mut self, text: &str) {
+        let s = self.ui_scale();
+        let Some(m) = self.world.monitors.first() else { return };
+        let gfx = note_gfx(text, s);
+        let ov = Overlay::new(gfx, false, (34.0 * s) as i32);
+        ov.show(&self.painter, m.work.l + (m.work.w() - ov.gfx.w) / 2, m.work.b - ov.gfx.h - (20.0 * s) as i32, 255);
+        self.pranks.notes.push(ov);
+        self.pranks.restack = true;
     }
 
     pub fn honk(&mut self) {
@@ -533,7 +571,7 @@ impl App {
                 let edge = if x - work.l < work.r - x { work.l } else { work.r };
                 let es = edge.to_string();
                 if self.run_on(i, &ACT_RUN, &[("TargetX", &es)], "#prank-edge") {
-                    self.pranks.jobs.push(Job::ToEdge { pet: self.pets[i].m.id, edge, meme: k == 1, ticks: 0 });
+                    self.pranks.jobs.push(Job::ToEdge { pet: self.pets[i].m.id, edge, meme: k == 1, ticks: 0, text: None });
                     self.dbg(&format!("notes/pictures: pet {} heads to edge {edge}", self.pets[i].m.id));
                 } else { self.dbg("notes/pictures: pet has no Run/Walk action"); }
             }
@@ -557,7 +595,7 @@ impl App {
                 let c: Vec<usize> = (0..self.pets.len()).filter(|&i| !self.pets[i].m.st.dragging).collect();
                 for i in c {
                     if let BorderRef::Ie(Side::Top) = self.floor_of(i) {
-                        let Some(h) = self.pets[i].m.st.ie else { continue };
+                        let Some(h) = self.pets[i].m.st.ie.filter(|h| *h > 0) else { continue };
                         let id = self.pets[i].m.id;
                         self.say(id, "window");
                         if random() < 0.5 { win::minimize_app_window(h); } else {
@@ -591,6 +629,7 @@ impl App {
         self.release_cursor(false);
         self.pranks.clear();
         self.life.clear();
+        self.extras.clear();
         self.pranks.panic_hidden = !self.pranks.panic_hidden;
         let hide = self.pranks.panic_hidden;
         self.paused = hide;
@@ -670,14 +709,16 @@ impl App {
         let s = self.ui_scale();
         for job in jobs {
             match job {
-                Job::ToEdge { pet, edge, meme, ticks } => {
+                Job::ToEdge { pet, edge, meme, ticks, text } => {
                     let Some(i) = self.pet_index(pet) else { continue };
                     let m = &mut self.pets[i].m;
                     let fin = m.prank_finished.take().is_some();
                     let done = fin && m.st.anchor.0 == edge;
                     if fin && !done { let a = m.st.anchor.0; self.dbg(&format!("edge run ended at x={a}, wanted {edge}")); }
                     if done {
-                        let gfx = if meme {
+                        let gfx = if let Some(t) = &text {
+                            Some(note_gfx(t, s))
+                        } else if meme {
                             // fresh internet pictures when ready, mixed with the local ones
                             let local = self.pranks.pool("pictures", "png");
                             if self.online.ready() && (local.is_empty() || random() < 0.6) {
@@ -698,10 +739,13 @@ impl App {
                         if self.run_on(i, &ACT_WALK, &[("TargetX", &ds)], "#prank-bring") {
                             let ov = Overlay::new(gfx, false, (34.0 * s) as i32);
                             self.pranks.jobs.push(Job::Bring { pet, ov, dest });
-                            self.say(pet, "note");
+                            if text.is_some() { self.say_always(pet, "note"); } else { self.say(pet, "note"); }
                         } else { unsafe { DeleteObject(gfx.bmp); } }
                     } else if self.pets[i].m.beh == "#prank-edge" && ticks < 1200 {
-                        self.pranks.jobs.push(Job::ToEdge { pet, edge, meme, ticks: ticks + 1 });
+                        self.pranks.jobs.push(Job::ToEdge { pet, edge, meme, ticks: ticks + 1, text });
+                    } else if let Some(t) = text {
+                        // the run was interrupted (picked up, ...): the note shows up anyway
+                        self.show_note(&t);
                     }
                 }
                 Job::Bring { pet, ov, dest } => {
@@ -786,7 +830,7 @@ impl App {
         for mut b in std::mem::take(&mut self.pranks.bubbles) {
             b.ticks += 1;
             let Some(i) = self.pet_index(b.pet) else { b.ov.close(); continue };
-            if b.ticks > 130 || !self.pets[i].w.shown { b.ov.close(); continue; }
+            if b.ticks > b.life || !self.pets[i].w.shown { b.ov.close(); continue; }
             let w = &self.pets[i].w;
             let mon = &self.world.monitors[self.pets[i].m.st.monitor.min(self.world.monitors.len() - 1)];
             let x = (w.pos.0 + w.size.0 / 2 - b.ov.gfx.w / 2).clamp(mon.screen.l, mon.screen.r - b.ov.gfx.w);
@@ -845,7 +889,7 @@ impl App {
         // pets on the floor chase the ball and kick it
         for i in 0..self.pets.len() {
             let (id, a) = (self.pets[i].m.id, self.pets[i].m.st.anchor);
-            if self.pets[i].m.st.dragging || self.pranks.busy(id) || self.life.busy(id) { continue; }
+            if self.pets[i].m.st.dragging || self.pranks.busy(id) || self.life.busy(id) || self.lan.as_ref().map(|l| l.busy(id)).unwrap_or(false) { continue; }
             if a.1 != work.b { continue; }
             let dx = b.x - a.0 as f64;
             if dx.abs() < b.r + 18.0 * s && on_floor && !b.dragging {

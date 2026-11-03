@@ -219,9 +219,10 @@ impl App {
         self.pranks.restack = true;
     }
 
-    fn pet_free(&self, i: usize) -> bool {
+    pub(crate) fn pet_free(&self, i: usize) -> bool {
         let p = &self.pets[i];
         p.w.shown && !p.m.st.dragging && !p.m.holding && !self.pranks.busy(p.m.id) && !self.life.busy(p.m.id)
+            && !self.lan.as_ref().map(|l| l.busy(p.m.id)).unwrap_or(false)
     }
 
     fn work_of(&self, i: usize) -> Rect { self.world.monitors[self.pets[i].m.st.monitor.min(self.world.monitors.len() - 1)].work }
@@ -252,6 +253,13 @@ impl App {
             heads.push(Win { hwnd: -(id as isize), rect, prev });
         }
         self.life.heads_prev = heads.iter().map(|w| ((-w.hwnd) as u32, w.rect)).collect();
+        // desktop icons not covered by a window are platforms too (hwnd = -(1000000 + index))
+        for (k, r) in self.extras.icons.iter().enumerate() {
+            let (cx, top) = ((r.l + r.r) / 2, r.t + 2);
+            if self.world.wins.iter().any(|w| w.rect.contains(cx, top) || w.rect.contains(r.l + 2, top) || w.rect.contains(r.r - 2, top)) { continue; }
+            let rect = Rect { l: r.l, t: r.t, r: r.r, b: r.t + 3 };
+            heads.push(Win { hwnd: -(1_000_000 + k as isize), rect, prev: rect });
+        }
         self.world.heads = heads;
         self.world.pets = infos;
     }
@@ -316,7 +324,7 @@ impl App {
             for i in 0..self.pets.len() {
                 let id = self.pets[i].m.id;
                 let p = &self.pets[i];
-                if p.m.st.dragging || !p.w.shown || !self.on_work_floor(i) { continue; }
+                if p.m.st.dragging || !p.w.shown || !self.on_work_floor(i) || p.m.beh.starts_with("#lan-") { continue; }
                 if self.life.asleep.contains(&id) && p.m.beh == "#life-sleep" {
                     if random() < 0.5 { self.emote(id, Emote::Zzz); }
                     continue;

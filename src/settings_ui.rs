@@ -42,6 +42,8 @@ pub const CMD_COOKIE: usize = 65;
 pub const CMD_BALLOON: usize = 66;
 pub const CMD_BED: usize = 67;
 pub const CMD_TOYS_CLEAR: usize = 68;
+pub const CMD_LASER: usize = 69;
+pub const CMD_CHALK: usize = 100;
 
 // raw control constants (kept local; they are stable Win32 values)
 const BS_AUTOCHECKBOX: u32 = 3;
@@ -70,6 +72,8 @@ struct NmLink { hdr: NmHdr, mask: u32, link: i32, state: u32, state_mask: u32, i
 enum F {
     Size, Filter, Opacity, MaxPets, Lang, Chooser, Sounds, Cloning, Unique, Watch,
     LStack, LMeet, LGames, LHide, LPush, LSleep, LSleepMin, LDay, LEmotes, LTalk,
+    Break, Water, Dance, Icons, Names,
+    LanOn, LanAuto, LanMin, LanPeers, LanName,
     Interact, Throw, Keep, Shake, HideFs, FsShow, Ignore,
     Notes, Pictures, Online, Prints, Cursor, Talk, Honk, Wins, Level, Panic,
 }
@@ -97,7 +101,7 @@ unsafe extern "system" fn proc_(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
                 ID_OK => push(Ev::SettingsApply(true)),
                 ID_APPLY => push(Ev::SettingsApply(false)),
                 ID_CANCEL => { close(); }
-                CMD_PETS_FOLDER | CMD_CHOOSE | CMD_ADD_PETS | CMD_PRANKS_FOLDER | CMD_BALL | CMD_COOKIE | CMD_BALLOON | CMD_BED | CMD_TOYS_CLEAR => push(Ev::Command(id)),
+                CMD_PETS_FOLDER | CMD_CHOOSE | CMD_ADD_PETS | CMD_PRANKS_FOLDER | CMD_BALL | CMD_COOKIE | CMD_BALLOON | CMD_BED | CMD_TOYS_CLEAR | CMD_LASER | CMD_CHALK => push(Ev::Command(id)),
                 _ => {}
             }
             return 0;
@@ -266,7 +270,7 @@ pub fn open(s: &Settings, icon: HICON) {
         let tab_cls = wide("SysTabControl32");
         let tab = CreateWindowExW(0, tab_cls.as_ptr(), null(), WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP, m, m, cw - 2 * m, tab_h, hwnd, null_mut(), GetModuleHandleW(null()), null());
         SendMessageW(tab, WM_SETFONT, font as WPARAM, 1);
-        for (i, name) in ["General", "Pets", "Life", "Windows", "Pranks"].iter().enumerate() {
+        for (i, name) in ["General", "Pets", "Life", "Extras", "Network", "Windows", "Pranks"].iter().enumerate() {
             let mut tx = wide(t(name));
             let item = TcItem { mask: 1, state: 0, state_mask: 0, text: tx.as_mut_ptr(), max: 0, image: 0, lparam: 0 };
             SendMessageW(tab, TCM_INSERTITEMW, i, &item as *const _ as LPARAM);
@@ -331,6 +335,38 @@ pub fn open(s: &Settings, icon: HICON) {
         b.button(t("Bed"), CMD_BED, b.x0 + 3 * (tw + px(sc, 8)), tw);
         let life = b.finish_page(top);
 
+        // --- Extras
+        b.note(t("Reminders: a pet brings you a note. Minutes, 0 = off."), 1);
+        b.gap(2);
+        b.edit(t("Take a break after (minutes at the computer)"), F::Break, &l.break_minutes.to_string(), true);
+        b.note(t("The break timer starts over when you are away for 5 minutes or more."), 1);
+        b.edit(t("Drink water every (minutes)"), F::Water, &l.water_minutes.to_string(), true);
+        b.note(t("Kitchen timer: tray menu > Timer. From scripts: Popeto.exe --say \"Build done\" or --note \"text\"."), 2);
+        b.gap(6);
+        b.check(t("Pets dance when music plays"), F::Dance, l.dance);
+        b.check(t("Pets can stand on desktop icons"), F::Icons, l.icons);
+        b.check(t("Show a pet's name when the mouse is over it (right click a pet > Name...)"), F::Names, l.show_names);
+        b.gap(6);
+        let hw = (b.w - px(sc, 10)) / 2;
+        b.button(t("Laser pointer"), CMD_LASER, b.x0, hw);
+        b.button(t("Chalk"), CMD_CHALK, b.x0 + hw + px(sc, 10), hw);
+        let extras = b.finish_page(top);
+
+        // --- Network
+        let n = &s.lan;
+        b.note(t("Pets walk off your screen and visit other PCs running Popeto on the same network, then come back."), 2);
+        b.gap(2);
+        b.check(t("Visit other PCs on the local network"), F::LanOn, n.on);
+        b.check(t("Pets go visiting by themselves now and then"), F::LanAuto, n.auto);
+        b.edit(t("A visit lasts (minutes)"), F::LanMin, &n.minutes.to_string(), true);
+        b.edit(t("This PC's name for others"), F::LanName, &n.name, false);
+        b.note(t("Empty = the computer name."), 1);
+        b.edit(t("Other PCs (addresses)"), F::LanPeers, &n.peers.join(", "), false);
+        b.note(t("Only needed if they aren't found automatically, e.g. 192.168.1.20, office-pc. Comma separated."), 2);
+        b.gap(4);
+        b.note(t("Visiting pets that you don't have are sent over the network for the visit (kept in the visitors folder). Uses port 47811; Windows may ask to allow Popeto in the firewall. Right click a pet > Go visiting."), 4);
+        let network = b.finish_page(top);
+
         // --- Windows
         b.check(t("Pets play with windows (stand, climb, hang on them)"), F::Interact, s.interact);
         b.check(t("Pets may carry and throw windows"), F::Throw, s.throw_windows);
@@ -380,7 +416,7 @@ pub fn open(s: &Settings, icon: HICON) {
         mk(t("Apply"), ID_APPLY, cw - m - bw2, false);
 
         let ctls = std::mem::take(&mut b.ctls);
-        UI.with(|u| *u.borrow_mut() = Some(Ui { hwnd, pages: vec![general, pets, life, windows, pranks], ctls, font }));
+        UI.with(|u| *u.borrow_mut() = Some(Ui { hwnd, pages: vec![general, pets, life, extras, network, windows, pranks], ctls, font }));
         show_page(0);
         // tab control must stay below its page controls
         SetWindowPos(tab, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -424,6 +460,16 @@ pub fn read(base: &Settings) -> Option<Settings> {
             F::LDay => s.life.daytime = on,
             F::LEmotes => s.life.emotes = on,
             F::LTalk => s.life.talk = on,
+            F::Break => s.life.break_minutes = text_of(h).trim().parse::<u32>().unwrap_or(s.life.break_minutes).min(600),
+            F::Water => s.life.water_minutes = text_of(h).trim().parse::<u32>().unwrap_or(s.life.water_minutes).min(600),
+            F::Dance => s.life.dance = on,
+            F::Icons => s.life.icons = on,
+            F::Names => s.life.show_names = on,
+            F::LanOn => s.lan.on = on,
+            F::LanAuto => s.lan.auto = on,
+            F::LanMin => s.lan.minutes = text_of(h).trim().parse::<u32>().unwrap_or(s.lan.minutes).clamp(1, 240),
+            F::LanName => s.lan.name = text_of(h).trim().replace('|', " "),
+            F::LanPeers => s.lan.peers = text_of(h).split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect(),
             F::Interact => s.interact = on,
             F::Throw => s.throw_windows = on,
             F::Keep => s.keep_on_screen = on,

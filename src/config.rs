@@ -422,7 +422,7 @@ impl Loader<'_> {
     }
 }
 
-fn find_conf(root: &Path, pack_dir: &Path, name: &str, file: &str) -> Option<PathBuf> {
+pub(crate) fn find_conf(root: &Path, pack_dir: &Path, name: &str, file: &str) -> Option<PathBuf> {
     let jp = if file == "actions.xml" { "動作.xml" } else { "行動.xml" };
     [pack_dir.join("conf"), root.join("conf").join(name), root.join("conf")]
         .iter()

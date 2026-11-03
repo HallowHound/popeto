@@ -2,13 +2,17 @@
 //! Popeto: portable desktop pets that run Shimeji / Shimeji-ee packs natively. No Java, no install.
 
 mod action;
+mod audio;
 mod chooser;
 mod config;
 mod convert;
 mod downloads;
 mod env;
 mod expr;
+mod extras;
+mod icons;
 mod importer;
+mod lan;
 mod life;
 mod i18n;
 mod mascot;
@@ -88,6 +92,8 @@ struct App {
     online: online::Online,
     downloads: downloads::Watcher,
     life: life::Life,
+    extras: extras::Extras,
+    lan: Option<lan::Lan>,
     /// Shimeji zips found in Downloads, waiting for the user to add them.
     pending: Vec<(std::path::PathBuf, Vec<String>)>,
 }
@@ -120,6 +126,15 @@ const ID_TOY_COOKIE: usize = 65;
 const ID_TOY_BALLOON: usize = 66;
 const ID_TOY_BED: usize = 67;
 const ID_TOY_CLEAR: usize = 68;
+const ID_TOY_LASER: usize = 69;
+const ID_TOY_CHALK: usize = 100;
+const ID_TIMER: usize = 110;
+const ID_TIMER_CANCEL: usize = 120;
+const ID_NAME: usize = 25;
+const ID_KEEP_VISITOR: usize = 26;
+const ID_SEND_HOME: usize = 27;
+const ID_VISIT_ANY: usize = 28;
+const ID_VISIT: usize = 4200;
 const ID_ADD_PETS: usize = 19;
 const ID_PRANK_LEVEL: usize = 40;
 const ID_PRANK_TOGGLE: usize = 50;
@@ -181,6 +196,8 @@ impl App {
             online: online::Online::start(),
             downloads: downloads::Watcher::new(),
             life: life::Life::default(),
+            extras: extras::Extras::default(),
+            lan: None,
             pending: vec![],
         }
     }
@@ -304,7 +321,7 @@ impl App {
     fn spawn_start(&mut self) {
         let want = self.settings.start_pets.trim().to_string();
         if want.is_empty() || want.eq_ignore_ascii_case("all") {
-            for i in 0..self.packs.len() { self.spawn(i, None, random() < 0.5, None); }
+            for i in 0..self.packs.len() { if !self.is_visitor_pack(i) { self.spawn(i, None, random() < 0.5, None); } }
         } else {
             for n in want.split(',') {
                 if let Some(i) = self.pack_index(n.trim()) { self.spawn(i, None, random() < 0.5, None); }
@@ -423,6 +440,7 @@ impl App {
             }
             Ev::Command(id) => self.command(id, None),
             Ev::Import(p) => self.import_from(std::path::Path::new(&p)),
+            Ev::Remote(kind, text) => self.remote(&kind, &text),
             Ev::Tray(msg) => match msg {
                 win::MSG_RUP | win::MSG_CTX => self.tray_menu(),
                 win::MSG_LDBL => self.summon_random(),
@@ -437,7 +455,7 @@ impl App {
     fn summon_random(&mut self) {
         let counts = self.counts();
         // with unique pets, pick only among kinds that aren't on screen yet
-        let free: Vec<usize> = (0..self.packs.len()).filter(|&i| !self.settings.unique_pets || counts[i] == 0).collect();
+        let free: Vec<usize> = (0..self.packs.len()).filter(|&i| (!self.settings.unique_pets || counts[i] == 0) && !self.is_visitor_pack(i)).collect();
         if free.is_empty() { return; }
         let i = free[(random() * free.len() as f64) as usize % free.len()];
         self.spawn(i, None, random() < 0.5, None);
@@ -448,7 +466,10 @@ impl App {
         let summon = Menu::new();
         let counts = self.counts();
         // with unique pets, a tick marks kinds already on screen
-        for (i, p) in self.packs.iter().enumerate() { summon.item(ID_SUMMON + i, &p.name, s.unique_pets && counts[i] > 0); }
+        for (i, p) in self.packs.iter().enumerate() {
+            if self.is_visitor_pack(i) { continue; }
+            summon.item(ID_SUMMON + i, &p.name, s.unique_pets && counts[i] > 0);
+        }
         summon.sep().item(ID_RANDOM, t("Random pet"), false);
         let opts = Menu::new();
         opts.item(ID_INTERACT, t("Play with windows"), s.interact)
@@ -484,7 +505,7 @@ impl App {
             .sub(t("How often"), lvl)
             .item(ID_PRANK_NOW, t("Do a prank now"), false)
             .item(if self.pranks.ball.is_some() { ID_BALL_REMOVE } else { ID_BALL }, if self.pranks.ball.is_some() { t("Take the ball away") } else { t("Throw a ball") }, false)
-            .item(ID_PRANK_CLEAR, &tf("Clean up notes && footprints ({})", &[&(notes + prints)]), false)
+            .item(ID_PRANK_CLEAR, &tf("Clean up notes && footprints ({})", &[&(notes + prints + self.extras.doodle_count())]), false)
             .item(ID_PRANK_FOLDER, t("Open pranks folder"), false)
             .sep()
             .disabled(&tf("Panic key: {}", &[&s.panic_key]));
@@ -493,12 +514,24 @@ impl App {
             .item(if self.pranks.ball.is_some() { ID_BALL_REMOVE } else { ID_BALL }, if self.pranks.ball.is_some() { t("Take the ball away") } else { t("Throw a ball") }, false)
             .item(ID_TOY_BALLOON, t("Release a balloon"), false)
             .item(ID_TOY_BED, t("Bed"), self.life.has_bed())
+            .item(ID_TOY_LASER, t("Laser pointer (follows the mouse)"), self.extras.laser.is_some())
+            .item(ID_TOY_CHALK, t("Chalk (pets draw now and then)"), self.extras.chalk)
             .sep()
             .item(ID_TOY_CLEAR, t("Remove all toys"), false);
+        let timer = Menu::new();
+        if let Some(at) = self.extras.timer_at {
+            let left = ((at.saturating_sub(self.tick_n)) as f64 / 40.0 / 60.0).ceil() as u64;
+            timer.item(ID_TIMER_CANCEL, &tf("Cancel timer ({} min left)", &[&left]), false).sep();
+        }
+        for (k, m) in extras::TIMERS.iter().enumerate() { timer.item(ID_TIMER + k, &tf("{} min", &[m]), false); }
         let links = Menu::new();
         for (k, (name, _, _)) in settings_ui::SITES.iter().enumerate() { links.item(ID_LINK + k, name, false); }
         let m = Menu::new();
-        m.disabled(&tf("Popeto - {} pet(s)", &[&self.pets.len()])).sep();
+        m.disabled(&tf("Popeto - {} pet(s)", &[&self.pets.len()]));
+        if let Some(l) = &self.lan {
+            m.disabled(&tf("Network: {} PC(s) nearby, {} pet(s) away", &[&l.peers.len(), &l.away_count()]));
+        }
+        m.sep();
         for (k, (_, names)) in self.pending.iter().enumerate() {
             m.item(ID_PENDING + k, &tf("Add downloaded pet: {}", &[&names.join(", ")]), false);
         }
@@ -515,6 +548,7 @@ impl App {
             .item(ID_PAUSE, t("Pause"), self.paused)
             .sep()
             .sub(t("Toys"), toys)
+            .sub(t("Timer"), timer)
             .sub(t("Pranks"), pr)
             .sub(t("Options"), opts)
             .item(ID_FOLDER, t("Open pets folder"), false)
@@ -540,8 +574,25 @@ impl App {
         let tm = Menu::new();
         for (k, n) in toggles.iter().enumerate() { tm.item(ID_TOGGLE + k, n, !dis.contains(*n)); }
         let m = Menu::new();
-        m.disabled(&pack.name).sep()
-            .item(ID_CHASE, t("Follow cursor"), false)
+        let id = self.pets[i].m.id;
+        let visitor = self.lan.as_ref().map(|l| l.is_visitor(id)).unwrap_or(false);
+        let title = match self.pet_name(i) { Some(n) if !visitor => format!("{n} ({})", pack.name), Some(n) => n, None => pack.name.clone() };
+        m.disabled(&title).sep();
+        let peers: Vec<(String, std::net::SocketAddr)> = self.lan.as_ref().map(|l| l.peers.iter().map(|p| (p.name.clone(), p.addr)).collect()).unwrap_or_default();
+        if visitor {
+            m.item(ID_SEND_HOME, t("Send home"), false).item(ID_KEEP_VISITOR, t("Keep a copy of this pet"), false);
+        } else {
+            m.item(ID_NAME, t("Name..."), false);
+            if self.lan.is_some() {
+                let vm = Menu::new();
+                if peers.is_empty() { vm.disabled(t("No other PCs found")); } else {
+                    vm.item(ID_VISIT_ANY, t("Anywhere"), false).sep();
+                    for (k, (n, _)) in peers.iter().enumerate() { vm.item(ID_VISIT + k, n, false); }
+                }
+                m.sub(t("Go visiting"), vm);
+            }
+        }
+        m.item(ID_CHASE, t("Follow cursor"), false)
             .item(ID_SETTINGS_WINDOW, t("Settings..."), false)
             .sub(t("Do something"), bm);
         if !toggles.is_empty() { m.sub(t("Allowed behaviours"), tm); }
@@ -565,6 +616,14 @@ impl App {
             self.settings.save();
         } else if id >= ID_BEHAVE && id < ID_BEHAVE + names.len() {
             self.set_behavior(i, &names[id - ID_BEHAVE]);
+        } else if id >= ID_VISIT && id < ID_VISIT + peers.len() {
+            self.go_visit(i, Some(peers[id - ID_VISIT].1));
+        } else if id == ID_VISIT_ANY {
+            self.go_visit(i, None);
+        } else if id == ID_SEND_HOME {
+            if let Some(l) = &mut self.lan { l.send_home(pid); }
+        } else if id == ID_KEEP_VISITOR {
+            self.keep_visitor(i);
         } else {
             self.command(id, Some(pid));
         }
@@ -618,9 +677,26 @@ impl App {
             ID_TOY_COOKIE => self.drop_toy(life::ToyKind::Cookie),
             ID_TOY_BALLOON => self.drop_toy(life::ToyKind::Balloon),
             ID_TOY_BED => self.drop_toy(life::ToyKind::Bed),
-            ID_TOY_CLEAR => { self.clear_toys(); self.remove_ball(); }
+            ID_TOY_CLEAR => { self.clear_toys(); self.remove_ball(); if self.extras.laser.is_some() { self.toggle_laser(); } self.extras.chalk = false; self.extras.clear_doodles(); }
+            ID_TOY_LASER => self.toggle_laser(),
+            ID_TOY_CHALK => self.toggle_chalk(),
+            ID_TIMER_CANCEL => self.extras.timer_at = None,
+            _ if (ID_TIMER..ID_TIMER + extras::TIMERS.len()).contains(&id) => {
+                self.extras.timer_at = Some(self.tick_n + extras::TIMERS[id - ID_TIMER] as u64 * 60 * 40);
+                if let Some(i) = (0..self.pets.len()).find(|&i| self.pets[i].w.shown) { let pid = self.pets[i].m.id; self.say_text(pid, &tf("OK, {} min!", &[&extras::TIMERS[id - ID_TIMER]]), 120); }
+            }
+            ID_NAME => if let Some(i) = idx {
+                let pack = self.packs[self.pets[i].m.pack].name.clone();
+                let cur = self.settings.names.get(&pack).cloned().unwrap_or_default();
+                if let Some(n) = win::input_box(self.pets[i].w.hwnd, t("Pet name"), &tf("Name for {}:", &[&pack]), &cur) {
+                    let n = n.trim().to_string();
+                    if n.is_empty() { self.settings.names.remove(&pack); } else { self.settings.names.insert(pack, n.clone()); }
+                    self.settings.save();
+                    if !n.is_empty() { let pid = self.pets[i].m.id; self.say_text(pid, &format!("{n}!"), 100); self.emote(pid, life::Emote::Heart); }
+                }
+            },
             ID_BALL_REMOVE => self.remove_ball(),
-            ID_PRANK_CLEAR => self.pranks.clear(),
+            ID_PRANK_CLEAR => { self.pranks.clear(); self.extras.clear_doodles(); }
             ID_PRANK_FOLDER => { let d = pranks::ensure_files(&self.root); win::open(&d); }
             _ if (ID_PRANK_LEVEL..ID_PRANK_LEVEL + 3).contains(&id) => { s.pranks.level = (id - ID_PRANK_LEVEL) as u8; s.save(); }
             _ if (ID_PRANK_TOGGLE..ID_PRANK_TOGGLE + 8).contains(&id) => {
@@ -709,7 +785,7 @@ impl App {
         if self.settings.debug {
             if let Some(e) = self.online.take_error() { self.log.push(format!("[online t={}] {e}", self.tick_n)); }
         }
-        if self.paused { return; }
+        if self.paused { if self.tick_n % 40 == 0 { self.extras_tick(); } return; }
 
         self.life_before();
         let mut outs: Vec<(u32, Out)> = Vec::new();
@@ -738,6 +814,8 @@ impl App {
         self.apply(outs);
         self.pranks_after();
         self.life_after();
+        self.extras_tick();
+        self.lan_tick();
         self.render();
         // fullscreen apps like RDP sit in the topmost band too, so re-assert often while one is up
         if self.tick_n % if self.fs_visible.is_some() { 8 } else { 80 } == 0 { self.restack(); }
@@ -798,6 +876,10 @@ impl App {
         self.trim_to_max();
         if self.settings.unique_pets { self.dedupe(); }
         self.configure_online();
+        if old.lan != self.settings.lan {
+            if old.lan.peers != self.settings.lan.peers || old.lan.name != self.settings.lan.name { self.lan_send_all_home(); self.lan = None; }
+            self.configure_lan();
+        }
     }
 
     /// Start or stop fetching internet pictures; sources follow the current language.
@@ -831,11 +913,14 @@ impl App {
     fn restack(&mut self) {
         let (top, bottom) = self.pranks.layers();
         let (ltop, lbottom) = self.life.layers();
-        let mut all = top;
+        let (xtop, xbottom) = self.extras.layers();
+        let mut all = xtop;
+        all.extend(top);
         all.extend(ltop);
         all.extend(self.pets.iter().rev().filter(|p| !self.life.hidden.contains_key(&p.m.id)).map(|p| p.w.hwnd));
         all.extend(bottom);
         all.extend(lbottom);
+        all.extend(xbottom);
         win::restack(&all);
     }
 
@@ -928,7 +1013,7 @@ impl App {
             let Some(b) = self.bmp(pack, img) else { continue };
             let (bw, bh, bm) = (b.w, b.h, if flip { b.flipped } else { b.normal });
             let x = if mirror { anchor.0 - (bw - ax) } else { anchor.0 - ax };
-            let y = anchor.1 - ay;
+            let y = anchor.1 - ay - self.extras.bob(self.pets[i].m.id, self.scale);
             let w = &mut self.pets[i].w;
             if w.last != Some((img, flip)) || !w.shown || w.size != (bw, bh) {
                 self.painter.update(w.hwnd, bm, x, y, bw, bh, alpha);
@@ -950,6 +1035,15 @@ fn root_dir() -> PathBuf {
     if cwd.join("img").is_dir() { cwd } else { exe_dir }
 }
 
+/// `--say text` or `--note text` on the command line.
+fn remote_arg() -> Option<(String, String)> {
+    let a: Vec<String> = std::env::args().collect();
+    let k = a.iter().position(|x| x == "--say" || x == "--note")?;
+    let text = a[k + 1..].join(" ");
+    if text.trim().is_empty() { return None; }
+    Some((a[k].trim_start_matches('-').to_string(), text))
+}
+
 fn main() {
     unsafe {
         windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(windows_sys::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -957,6 +1051,9 @@ fn main() {
         CreateMutexW(null(), 0, name.as_ptr());
         if GetLastError() == ERROR_ALREADY_EXISTS {
             // dragged a zip onto Popeto.exe while it runs: hand it over to the running one
+            if let Some((kind, text)) = remote_arg() {
+                if win::send_remote(&kind, &text) { return; }
+            }
             if let Some(p) = std::env::args().nth(1).filter(|a| !a.starts_with("--")) {
                 if win::send_to_running(&p) { return; }
             }
@@ -981,6 +1078,7 @@ fn main() {
     win::tray(app.tray, app.icon, win::TRAY_ADD);
     win::register_hotkey(app.tray, &app.settings.panic_key);
     app.configure_online();
+    app.configure_lan();
     let pr = &app.settings.pranks;
     if pr.notes || pr.memes || pr.footprints || pr.cursor || pr.talk || pr.honk || pr.windows { pranks::ensure_files(&root); }
     app.world.monitors = win::monitors();
@@ -989,6 +1087,7 @@ fn main() {
     app.spawn_start();
     if std::env::args().any(|a| a == "--settings") { settings_ui::open(&app.settings, app.icon); }
     if let Some(p) = std::env::args().nth(1).filter(|a| !a.starts_with("--")) { app.import_from(std::path::Path::new(&p)); }
+    if let Some(r) = remote_arg() { app.extras.remote.push(r); }
 
     unsafe {
         // high resolution timer so 40 fps really is 40 fps (default Windows timers tick at ~15.6ms)
@@ -1023,6 +1122,7 @@ fn main() {
         }
     }
     win::tray(app.tray, app.icon, win::TRAY_DEL);
+    app.lan_send_all_home();
     app.unload();
     let _ = win::TRAY_MOD;
     let _ = win::MSG_LUP;

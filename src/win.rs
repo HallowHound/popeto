@@ -38,6 +38,8 @@ pub enum Ev {
     Import(String),
     /// A tray command triggered from elsewhere (settings window buttons).
     Command(usize),
+    /// `Popeto.exe --say text` / `--note text` sent to the running Popeto: (kind, text).
+    Remote(String, String),
 }
 
 thread_local! {
@@ -87,6 +89,10 @@ unsafe extern "system" fn tray_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -
         if cd.dwData == 0x504F5045 && !cd.lpData.is_null() {
             let s = std::slice::from_raw_parts(cd.lpData as *const u16, cd.cbData as usize / 2);
             push(Ev::Import(String::from_utf16_lossy(s)));
+        }
+        if cd.dwData == 0x504F5053 && !cd.lpData.is_null() {
+            let s = String::from_utf16_lossy(std::slice::from_raw_parts(cd.lpData as *const u16, cd.cbData as usize / 2));
+            if let Some((k, t)) = s.split_once('\n') { push(Ev::Remote(k.to_string(), t.to_string())); }
         }
         return 1;
     }
@@ -233,6 +239,93 @@ pub fn send_to_running(path: &str) -> bool {
         let cd = COPYDATASTRUCT { dwData: 0x504F5045, cbData: (data.len() * 2) as u32, lpData: data.as_ptr() as *mut _ };
         SendMessageW(h, WM_COPYDATA, 0, &cd as *const _ as LPARAM);
         true
+    }
+}
+
+/// Hand `--say` / `--note` text to the running Popeto. Returns false if none found.
+pub fn send_remote(kind: &str, text: &str) -> bool {
+    use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
+    unsafe {
+        let cls = wide(TRAY_CLASS);
+        let h = FindWindowW(cls.as_ptr(), null());
+        if h.is_null() { return false; }
+        let data: Vec<u16> = format!("{kind}\n{text}").encode_utf16().collect();
+        let cd = COPYDATASTRUCT { dwData: 0x504F5053, cbData: (data.len() * 2) as u32, lpData: data.as_ptr() as *mut _ };
+        SendMessageW(h, WM_COPYDATA, 0, &cd as *const _ as LPARAM);
+        true
+    }
+}
+
+/// Top-level window under a screen point (layered pixels that are fully transparent don't count).
+pub fn window_at(x: i32, y: i32) -> isize { unsafe { WindowFromPoint(POINT { x, y }) as isize } }
+
+thread_local! { static INPUT: RefCell<(HWND, Option<String>, bool)> = const { RefCell::new((null_mut(), None, false)) }; }
+
+unsafe extern "system" fn input_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    let finish = |ok: bool| INPUT.with(|i| {
+        let mut i = i.borrow_mut();
+        if ok {
+            let mut buf = vec![0u16; 256];
+            let n = GetWindowTextW(i.0, buf.as_mut_ptr(), buf.len() as i32).max(0) as usize;
+            i.1 = Some(String::from_utf16_lossy(&buf[..n]));
+        }
+        i.2 = true;
+    });
+    match msg {
+        WM_COMMAND => { let id = wp & 0xFFFF; if id == 1 || id == 2 { finish(id == 1); } return 0; }
+        WM_CLOSE => { finish(false); return 0; }
+        WM_CTLCOLORSTATIC => { SetBkMode(wp as HDC, TRANSPARENT as _); return GetSysColorBrush(COLOR_WINDOW) as LRESULT; }
+        _ => {}
+    }
+    DefWindowProcW(h, msg, wp, lp)
+}
+
+/// Small modal "type a value" window. None = cancelled.
+pub fn input_box(owner: HWND, title: &str, prompt: &str, value: &str) -> Option<String> {
+    unsafe {
+        let inst = GetModuleHandleW(null());
+        let cls = wide("PopetoInput");
+        let wc = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32, style: 0, lpfnWndProc: Some(input_proc), cbClsExtra: 0, cbWndExtra: 0,
+            hInstance: inst, hIcon: null_mut(), hCursor: LoadCursorW(null_mut(), IDC_ARROW), hbrBackground: GetSysColorBrush(COLOR_WINDOW),
+            lpszMenuName: null(), lpszClassName: cls.as_ptr(), hIconSm: null_mut(),
+        };
+        RegisterClassExW(&wc);
+        let s = windows_sys::Win32::UI::HiDpi::GetDpiForSystem() as f64 / 96.0;
+        let px = |v: i32| (v as f64 * s).round() as i32;
+        let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+        let mut r = RECT { left: 0, top: 0, right: px(320), bottom: px(118) };
+        AdjustWindowRectEx(&mut r, style, 0, WS_EX_DLGMODALFRAME);
+        let (ww, wh) = (r.right - r.left, r.bottom - r.top);
+        let (cx, cy) = crate::win::cursor();
+        let t = wide(title);
+        let h = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST, cls.as_ptr(), t.as_ptr(), style, cx - ww / 2, cy - wh / 2, ww, wh, owner, null_mut(), inst, null());
+        if h.is_null() { return None; }
+        let face = wide("Segoe UI");
+        let font = CreateFontW(-px(14), 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as _, 0, 0, CLEARTYPE_QUALITY as _, 0, face.as_ptr());
+        let mk = |class: &str, text: &str, st: u32, ex: u32, x: i32, y: i32, w: i32, hh: i32, id: usize| {
+            let (c, t) = (wide(class), wide(text));
+            let c = CreateWindowExW(ex, c.as_ptr(), t.as_ptr(), WS_CHILD | WS_VISIBLE | st, px(x), px(y), px(w), px(hh), h, id as HMENU, inst, null());
+            SendMessageW(c, WM_SETFONT, font as WPARAM, 1);
+            c
+        };
+        mk("STATIC", prompt, 0, 0, 12, 10, 296, 20, 0);
+        let ed = mk("EDIT", value, WS_TABSTOP | 0x80 /* ES_AUTOHSCROLL */, WS_EX_CLIENTEDGE, 12, 34, 296, 26, 100);
+        mk("BUTTON", "OK", WS_TABSTOP | 1 /* BS_DEFPUSHBUTTON */, 0, 128, 76, 86, 28, 1);
+        mk("BUTTON", crate::i18n::t("Cancel"), WS_TABSTOP, 0, 222, 76, 86, 28, 2);
+        INPUT.with(|i| *i.borrow_mut() = (ed, None, false));
+        ShowWindow(h, SW_SHOW);
+        SetForegroundWindow(h);
+        windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus(ed);
+        SendMessageW(ed, 0xB1 /* EM_SETSEL */, 0, -1);
+        let mut msg: MSG = std::mem::zeroed();
+        while !INPUT.with(|i| i.borrow().2) {
+            if GetMessageW(&mut msg, null_mut(), 0, 0) <= 0 { PostQuitMessage(0); break; }
+            if IsDialogMessageW(h, &msg) == 0 { TranslateMessage(&msg); DispatchMessageW(&msg); }
+        }
+        DestroyWindow(h);
+        DeleteObject(font);
+        INPUT.with(|i| i.borrow_mut().1.take())
     }
 }
 
