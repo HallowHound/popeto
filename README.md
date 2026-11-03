@@ -3,6 +3,13 @@
 Portable desktop pets for Windows that run **Shimeji / Shimeji-ee pet packs natively**: no Java, no .NET,
 no installer. Copy the folder anywhere and run `Popeto.exe` (~1 MB, ~15 MB RAM).
 
+<p align="center"><img src="docs/pets.png" alt="Three bear pets standing together on the desktop"></p>
+
+<p align="center">
+  <img src="docs/chooser.png" alt="Pet chooser" width="49%">
+  <img src="docs/settings.png" alt="Settings window, Life tab" width="40%">
+</p>
+
 ## Features
 
 - **Shimeji-ee compatible engine**: reads `actions.xml` / `behaviors.xml` (English or original Japanese schema),
