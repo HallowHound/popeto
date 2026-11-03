@@ -1,0 +1,28 @@
+# Push a tag like v0.2.0 to build Popeto and publish a GitHub release with the portable zip.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --release
+      - name: Package
+        shell: pwsh
+        run: |
+          ./scripts/package.ps1
+          Compress-Archive -Path dist/Popeto -DestinationPath "Popeto-$env:GITHUB_REF_NAME.zip"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$env:GITHUB_REF_NAME" "Popeto-$env:GITHUB_REF_NAME.zip" --title "Popeto $env:GITHUB_REF_NAME" --generate-notes

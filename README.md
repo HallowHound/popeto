@@ -38,14 +38,39 @@ no installer. Copy the folder anywhere and run `Popeto.exe` (~1 MB, ~15 MB RAM).
 - **Languages**: English and Russian UI (auto from Windows). Prank content in two layers:
   `pranks\universal` (any language) + `pranks\<lang>`.
 
-## Build
+## Download
 
-Requires Rust (MSVC toolchain). The exe is statically linked (`+crt-static`), so it needs no runtime.
+Get `Popeto-<version>.zip` from [Releases](../../releases), unzip it anywhere and run `Popeto.exe`.
+The exe isn't code-signed, so on first launch Windows SmartScreen may say "Windows protected your PC":
+click **More info > Run anyway**.
+
+## Build it yourself
+
+1. Install [Rust](https://rustup.rs/) with the default MSVC toolchain (`x86_64-pc-windows-msvc`).
+   Rustup offers to install the Visual Studio Build Tools if they are missing
+   (workload "Desktop development with C++").
+2. Clone and build:
+
+   ```powershell
+   git clone https://github.com/HallowHound/popeto.git
+   cd popeto
+   powershell -ExecutionPolicy Bypass -File scripts\package.ps1
+   ```
+
+   This builds `target\release\popeto.exe` and assembles the portable folder `dist\Popeto`
+   (Popeto.exe, README.txt, LICENSE.txt, pranks\, empty img\). `cargo build --release` alone builds just the exe;
+   `cargo test` runs the tests.
+
+The exe is statically linked (`+crt-static`, see `.cargo/config.toml`), so it needs no runtime on other PCs.
+
+### Releases
+
+Bump `version` in `Cargo.toml`, commit, then push a tag; GitHub Actions (`.github/workflows/release.yml`)
+tests, packages and publishes `Popeto-<tag>.zip` as a release:
 
 ```powershell
-cargo build --release
-# or build + assemble the portable folder dist\Popeto:
-powershell -ExecutionPolicy Bypass -File scripts\package.ps1
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 `Popeto.exe --settings` opens the settings window on start; `Popeto.exe <pets.zip>` imports pets;
