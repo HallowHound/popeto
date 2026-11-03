@@ -87,3 +87,9 @@ them with **tray > Add pets from Shimeji zip...**
 
 Prank pictures come from Wikimedia Commons under free licenses; authors and licenses are listed in
 `assets/pranks/*/pictures/CREDITS.txt`. Russian captions were added for Popeto.
+
+## License
+
+Popeto's code is under the [MIT License](LICENSE). The prank pictures keep their own licenses
+(CC0 / CC BY / CC BY-SA, see the `CREDITS.txt` files); pictures with Popeto captions are shared
+under the same license as the original photo.
