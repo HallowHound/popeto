@@ -3,6 +3,7 @@
 
 mod action;
 mod audio;
+mod autostart;
 mod chooser;
 mod config;
 mod convert;
@@ -134,6 +135,7 @@ const ID_TIMER: usize = 110;
 const ID_TIMER_CANCEL: usize = 120;
 const ID_CHECK_UPDATE: usize = 130;
 const ID_INSTALL_UPDATE: usize = 131;
+const ID_AUTOSTART: usize = 132;
 const ID_NAME: usize = 25;
 const ID_KEEP_VISITOR: usize = 26;
 const ID_SEND_HOME: usize = 27;
@@ -481,7 +483,8 @@ impl App {
         }
         summon.sep().item(ID_RANDOM, t("Random pet"), false);
         let opts = Menu::new();
-        opts.item(ID_INTERACT, t("Play with windows"), s.interact)
+        opts.item(ID_AUTOSTART, t("Start with Windows"), s.autostart).sep()
+            .item(ID_INTERACT, t("Play with windows"), s.interact)
             .item(ID_THROW, t("Allow carrying && throwing windows"), s.throw_windows)
             .item(ID_KEEP, t("Keep thrown windows on screen"), s.keep_on_screen)
             .item(ID_SHAKE, t("Shake windows on hard landing"), s.shake)
@@ -664,6 +667,7 @@ impl App {
             ID_RESTORE => {
                 for (h, (l, t)) in self.originals.drain() { win::move_app_window(h, l, t); }
             }
+            ID_AUTOSTART => { s.autostart = !s.autostart; autostart::set(s.autostart); }
             ID_INTERACT => { s.interact = !s.interact; s.save(); }
             ID_THROW => { s.throw_windows = !s.throw_windows; s.save(); }
             ID_KEEP => { s.keep_on_screen = !s.keep_on_screen; s.save(); }
@@ -883,6 +887,7 @@ impl App {
     fn apply_settings(&mut self, new: Settings) {
         let old = std::mem::replace(&mut self.settings, new);
         let s = &self.settings;
+        if old.autostart != s.autostart { autostart::set(s.autostart); }
         s.save();
         if old.language != s.language {
             i18n::set(&s.language);
@@ -1114,6 +1119,7 @@ fn main() {
     app.world.cursor = win::cursor();
     if app.packs.len() > 1 && (app.settings.show_chooser || app.settings.fresh) { app.choose_pets(true); }
     app.spawn_start();
+    autostart::refresh();
     if std::env::args().any(|a| a == "--settings") { settings_ui::open(&app.settings, app.icon); }
     if let Some(p) = std::env::args().nth(1).filter(|a| !a.starts_with("--")) { app.import_from(std::path::Path::new(&p)); }
     if let Some(r) = remote_arg() { app.extras.remote.push(r); }

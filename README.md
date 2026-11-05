@@ -20,6 +20,7 @@ no installer. Copy the folder anywhere and run `Popeto.exe` (~1 MB, ~15 MB RAM).
   (even windows below others), walk, climb, hang under them, ride along when you drag a window, carry and
   throw windows, and fall off when you shake them. Thrown windows can be kept on screen and restored.
 - Multi-monitor, per-monitor DPI, fullscreen detection (hide over games, stay visible over Remote Desktop).
+- **Start with Windows** (tray > Options, or Settings > General): a per-user Run entry, no admin rights.
 - **Pet chooser** with previews, **settings window** (General / Windows / Pranks), tray menu.
 - **Importer**: add pets from a downloaded Shimeji zip or folder; shared `conf\` is attached automatically.
   Pets in the mobile Shimeji app format (shimeji.org: `manifest.json` + `animation.json` + WebP frames) are

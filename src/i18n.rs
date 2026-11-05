@@ -137,6 +137,8 @@ pub fn t(s: &'static str) -> &'static str {
         "Edit settings file" => "Открыть файл настроек",
         "Reload pets" => "Перезагрузить питомцев",
         "Exit" => "Выход",
+        "Start with Windows" => "Запускать вместе с Windows",
+        "Start Popeto when Windows starts" => "Запускать Popeto вместе с Windows",
         "Check for updates (now {})" => "Проверить обновления (сейчас {})",
         "Update to {}" => "Обновить до {}",
         "Popeto {} is available. Click here to update." => "Вышел Popeto {}. Нажмите, чтобы обновить.",

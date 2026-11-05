@@ -88,6 +88,8 @@ pub struct Settings {
     pub watch_downloads: bool,
     /// Look for new Popeto versions on GitHub (updating still asks).
     pub check_updates: bool,
+    /// Start with Windows. Lives in the registry (Run key), not in the ini.
+    pub autostart: bool,
     pub debug: bool,
     pub show_chooser: bool,
     /// No ini existed before this run.
@@ -125,6 +127,7 @@ impl Settings {
             unique_pets: false,
             watch_downloads: true,
             check_updates: true,
+            autostart: crate::autostart::enabled(),
             debug: false,
             show_chooser: false,
             fresh: !path.exists(),

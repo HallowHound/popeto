@@ -70,7 +70,7 @@ struct NmLink { hdr: NmHdr, mask: u32, link: i32, state: u32, state_mask: u32, i
 
 #[derive(Clone, Copy, PartialEq)]
 enum F {
-    Size, Filter, Opacity, MaxPets, Lang, Chooser, Sounds, Cloning, Unique, Watch, Updates,
+    Size, Filter, Opacity, MaxPets, Lang, Chooser, Sounds, Cloning, Unique, Watch, Updates, Autostart,
     LStack, LMeet, LGames, LHide, LPush, LSleep, LSleepMin, LDay, LEmotes, LTalk,
     Break, Water, Dance, Icons, Names,
     LanOn, LanAuto, LanMin, LanPeers, LanName,
@@ -295,6 +295,7 @@ pub fn open(s: &Settings, icon: HICON) {
         b.check(t("Allow pets to clone themselves"), F::Cloning, s.cloning);
         b.check(t("Only one of each pet (no duplicates)"), F::Unique, s.unique_pets);
         b.check(t("Check GitHub for new versions (asks before updating)"), F::Updates, s.check_updates);
+        b.check(t("Start Popeto when Windows starts"), F::Autostart, s.autostart);
         b.gap(10);
         b.note(t("Changing size or smoothing reloads the pets (they stay where they are)."), 2);
         let general = b.finish_page(top);
@@ -452,6 +453,7 @@ pub fn read(base: &Settings) -> Option<Settings> {
             F::Unique => s.unique_pets = on,
             F::Watch => s.watch_downloads = on,
             F::Updates => s.check_updates = on,
+            F::Autostart => s.autostart = on,
             F::LStack => s.life.stacking = on,
             F::LMeet => s.life.meet = on,
             F::LGames => s.life.games = on,
