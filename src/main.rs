@@ -453,8 +453,7 @@ impl App {
                 win::MSG_RUP | win::MSG_CTX => self.tray_menu(),
                 win::MSG_LDBL => self.summon_random(),
                 win::MSG_BALLOON_CLICK => {
-                    if std::mem::take(&mut self.update.balloon) { self.install_update(); }
-                    else if !self.pending.is_empty() { let (p, _) = self.pending.remove(0); self.import_from(&p); }
+                    if !self.pending.is_empty() { let (p, _) = self.pending.remove(0); self.import_from(&p); }
                 }
                 _ => {}
             },

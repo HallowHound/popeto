@@ -19,6 +19,8 @@ pub struct Release { pub tag: String, url: String }
 enum Msg {
     Checked(Result<Option<Release>, String>, bool),
     Installed(Result<PathBuf, String>),
+    /// Answer to "Update now?".
+    Answer(bool),
 }
 
 pub struct Updater {
@@ -27,15 +29,19 @@ pub struct Updater {
     pub available: Option<Release>,
     pub busy: bool,
     next_check: u64,
-    /// The last tray balloon was about the update.
-    pub balloon: bool,
+    /// A new version to ask about once nothing fullscreen is in front.
+    ask: Option<Release>,
+    /// The question box is open.
+    asking: bool,
+    /// Versions already asked about in this run ("No" waits for the next start).
+    asked: Vec<String>,
 }
 
 impl Default for Updater {
     fn default() -> Self {
         let (tx, rx) = channel();
         // first automatic check 20 s after start
-        Updater { tx, rx, available: None, busy: false, next_check: 40 * 20, balloon: false }
+        Updater { tx, rx, available: None, busy: false, next_check: 40 * 20, ask: None, asking: false, asked: vec![] }
     }
 }
 
@@ -141,16 +147,30 @@ impl App {
             self.update.next_check = self.tick_n + 40 * 60 * 60 * 12;
             if self.update.available.is_none() { self.check_updates(false); }
         }
+        // ask when you can see it: not over a game or a fullscreen Remote Desktop, not while you're away
+        if let Some(rel) = &self.update.ask {
+            if !self.update.asking && self.fs_settled.is_none() && !self.life.away {
+                let q = tf("Popeto {} is out (you have {}).\n\nUpdate now? Popeto restarts by itself; your pets and settings stay.", &[&rel.tag, &VERSION]);
+                self.update.ask = None;
+                self.update.asking = true;
+                let tx = self.update.tx.clone();
+                // own thread, so pets keep moving while the box is open
+                std::thread::spawn(move || { let _ = tx.send(Msg::Answer(crate::win::ask_yes_no(&q))); });
+            }
+        }
         while let Ok(m) = self.update.rx.try_recv() {
-            self.update.busy = false;
+            if !matches!(m, Msg::Answer(_)) { self.update.busy = false; }
             match m {
-                Msg::Checked(Ok(Some(rel)), _) => {
-                    let known = self.update.available.as_ref().map(|r| r.tag == rel.tag).unwrap_or(false);
+                Msg::Checked(Ok(Some(rel)), manual) => {
                     self.update.available = Some(rel.clone());
-                    if !known {
-                        crate::win::tray_balloon(self.tray, "Popeto", &tf("Popeto {} is available. Click here to update.", &[&rel.tag]));
-                        self.update.balloon = true;
+                    if manual || !self.update.asked.contains(&rel.tag) {
+                        self.update.asked.push(rel.tag.clone());
+                        self.update.ask = Some(rel);
                     }
+                }
+                Msg::Answer(yes) => {
+                    self.update.asking = false;
+                    if yes { self.install_update(); }
                 }
                 Msg::Checked(Ok(None), true) => self.tell(&tf("You have the latest version ({})", &[&VERSION])),
                 Msg::Checked(Err(e), true) => self.tell(&tf("Couldn't check for updates: {}", &[&e])),

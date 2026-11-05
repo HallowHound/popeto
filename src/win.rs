@@ -858,6 +858,13 @@ pub fn open(path: &Path) {
     unsafe { ShellExecuteW(null_mut(), op.as_ptr(), p.as_ptr(), null(), null(), SW_SHOWNORMAL); }
 }
 
+/// Yes/No question box, on top of other windows. Blocks the calling thread.
+pub fn ask_yes_no(text: &str) -> bool {
+    let t = wide(text);
+    let c = wide("Popeto");
+    unsafe { MessageBoxW(null_mut(), t.as_ptr(), c.as_ptr(), MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND) == IDYES }
+}
+
 pub fn message(text: &str) {
     let t = wide(text);
     let c = wide("Popeto");

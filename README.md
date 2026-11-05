@@ -54,7 +54,7 @@ The exe isn't code-signed, so on first launch Windows SmartScreen may say "Windo
 click **More info > Run anyway**.
 
 Popeto checks GitHub for new versions (once a start and every 12 hours, switch off in Settings > General).
-When one is out, click the tray notification or **tray > Update to ...**: only `Popeto.exe` is replaced, your pets,
+When one is out, Popeto asks whether to update (not over fullscreen apps; **No** asks again next start, or use **tray > Update to ...**): only `Popeto.exe` is replaced, your pets,
 pranks and settings stay, and Popeto restarts by itself.
 
 ## Build it yourself

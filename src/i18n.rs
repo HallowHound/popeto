@@ -141,7 +141,7 @@ pub fn t(s: &'static str) -> &'static str {
         "Start Popeto when Windows starts" => "Запускать Popeto вместе с Windows",
         "Check for updates (now {})" => "Проверить обновления (сейчас {})",
         "Update to {}" => "Обновить до {}",
-        "Popeto {} is available. Click here to update." => "Вышел Popeto {}. Нажмите, чтобы обновить.",
+        "Popeto {} is out (you have {}).\n\nUpdate now? Popeto restarts by itself; your pets and settings stay." => "Вышел Popeto {} (у вас {}).\n\nОбновить сейчас? Popeto перезапустится сам; питомцы и настройки останутся.",
         "You have the latest version ({})" => "У вас последняя версия ({})",
         "Couldn't check for updates: {}" => "Не удалось проверить обновления: {}",
         "no releases found" => "релизы не найдены",
