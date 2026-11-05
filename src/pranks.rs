@@ -773,8 +773,13 @@ impl App {
                     let (a, lr) = (m.st.anchor, m.st.look_right);
                     let gap = (16.0 * s) as i32;
                     let x = if lr { a.0 - gap - ov.gfx.w } else { a.0 + gap };
+                    // a pet at the screen edge would leave the note half off screen
+                    let work = self.world.monitors[m.st.monitor.min(self.world.monitors.len() - 1)].work;
+                    let x = x.clamp(work.l, (work.r - ov.gfx.w).max(work.l));
                     ov.show(&self.painter, x, a.1 - ov.gfx.h + (6.0 * s) as i32, 255);
                     if finished || m.beh != "#prank-bring" || a.0 == dest {
+                        let beh = m.beh.clone();
+                        self.dbg(&format!("pet {pet} leaves its note at x={x} (now {beh})"));
                         self.pranks.notes.push(ov);
                         self.pranks.restack = true;
                     } else {

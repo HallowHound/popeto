@@ -33,7 +33,11 @@ enum NetEv {
 struct Away { pack: String, peer: SocketAddr, side: char, welcome_by: u64, welcomed: bool, deadline: u64, msg: Option<String> }
 
 /// Someone else's pet visiting us.
-struct Visitor { vid: u64, origin: SocketAddr, enter: char, until: u64, name: String, tries: u32 }
+struct Visitor {
+    vid: u64, origin: SocketAddr, enter: char, until: u64, name: String, tries: u32,
+    /// Hello bubble and message, given once the guest stands on screen (a new pet first falls a bit).
+    greet: Option<(String, Option<String>)>, arrived: u64,
+}
 
 /// A pet walking to the screen edge to leave.
 struct Leave { side: char, edge: i32, to: Option<SocketAddr>, ticks: u32, msg: Option<String> }
@@ -384,6 +388,7 @@ impl App {
                     lan.send(v.origin, format!("RETURN|{}|{}|{}", lan.id, v.vid, opposite(v.enter)));
                 }
                 Some(i) => {
+                    self.greet_visitor(&mut lan, id, i);
                     let v = &lan.visitors[&id];
                     // asleep or not, guests leave on time; only wait while someone holds them or a prank uses them
                     let p = &self.pets[i];
@@ -503,16 +508,29 @@ impl App {
             return;
         };
         let mins = self.settings.lan.minutes.max(1) as u64;
-        lan.visitors.insert(id, Visitor { vid, origin: a.from, enter: a.side, until: self.tick_n + mins * 60 * 40, name: a.name.clone(), tries: 0 });
+        let hi = if a.msg.is_some() { tf("A message from {}!", &[&a.origin]) } else { tf("Hi! I'm visiting from {}", &[&a.origin]) };
+        lan.visitors.insert(id, Visitor {
+            vid, origin: a.from, enter: a.side, until: self.tick_n + mins * 60 * 40, name: a.name.clone(), tries: 0,
+            greet: Some((hi, a.msg.clone())), arrived: self.tick_n,
+        });
         self.lan_dbg(&format!("visitor {} from {} arrived as pet {id}", a.pack, a.origin));
+    }
+
+    /// Say hello and hand over the message once the new guest is visible and on its feet.
+    fn greet_visitor(&mut self, lan: &mut Lan, id: u32, i: usize) {
+        let Some(v) = lan.visitors.get_mut(&id) else { return };
+        if v.greet.is_none() { return; }
+        let p = &self.pets[i];
+        let ready = p.w.shown && p.m.beh != "Fall" && !p.m.st.dragging && self.floor_of(i) != crate::env::BorderRef::NotOn;
+        // the pack's first Fall starts a tick or two after the spawn, so give it a moment
+        let age = self.tick_n.saturating_sub(v.arrived);
+        if age < 40 || (!ready && age < 400) { return; }
+        let (hi, msg) = v.greet.take().unwrap();
         self.emote(id, crate::life::Emote::Heart);
-        if let Some(m) = &a.msg {
-            // carry the note in instead of the usual stroll
-            self.carry_note(id, m);
-            self.say_text(id, &tf("A message from {}!", &[&a.origin]), 200);
-            return;
+        if let Some(m) = msg {
+            self.lan_dbg(&format!("visitor {id} brings a message ({} chars)", m.chars().count()));
+            self.carry_note(id, &m);
         }
-        let hi = tf("Hi! I'm visiting from {}", &[&a.origin]);
         self.say_text(id, &hi, 200);
     }
 
