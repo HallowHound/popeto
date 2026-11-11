@@ -118,7 +118,7 @@ pub fn after_update(mutex_name: &[u16]) {
 
 impl App {
     /// A pet says it, or a tray balloon when no pet is on screen.
-    fn tell(&mut self, text: &str) {
+    pub(crate) fn tell(&mut self, text: &str) {
         match (0..self.pets.len()).find(|&i| self.pets[i].w.shown) {
             Some(i) => { let id = self.pets[i].m.id; self.say_text(id, text, 260); }
             None => crate::win::tray_balloon(self.tray, "Popeto", text),

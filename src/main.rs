@@ -142,6 +142,7 @@ const ID_SEND_HOME: usize = 27;
 const ID_VISIT_ANY: usize = 28;
 const ID_VISIT: usize = 4200;
 const ID_VISIT_MSG: usize = 4300;
+const ID_GIFT: usize = 4400;
 const ID_ADD_PETS: usize = 19;
 const ID_PRANK_LEVEL: usize = 40;
 const ID_PRANK_TOGGLE: usize = 50;
@@ -610,6 +611,11 @@ impl App {
                     for (k, (n, _)) in peers.iter().enumerate() { mm.item(ID_VISIT_MSG + k, n, false); }
                 }
                 m.sub(t("Send with a message"), mm);
+                let gm = Menu::new();
+                if peers.is_empty() { gm.disabled(t("No other PCs found")); } else {
+                    for (k, (n, _)) in peers.iter().enumerate() { gm.item(ID_GIFT + k, n, false); }
+                }
+                m.sub(t("Give a copy to"), gm);
             }
         }
         m.item(ID_CHASE, t("Follow cursor"), false)
@@ -644,6 +650,8 @@ impl App {
                 let m = m.trim().chars().take(lan::MAX_MSG).collect::<String>();
                 if !m.is_empty() { self.go_visit(i, Some(*addr), Some(m)); }
             }
+        } else if id >= ID_GIFT && id < ID_GIFT + peers.len() {
+            self.give_pet(i, peers[id - ID_GIFT].1);
         } else if id == ID_VISIT_ANY {
             self.go_visit(i, None, None);
         } else if id == ID_SEND_HOME {

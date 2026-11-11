@@ -27,7 +27,17 @@ enum NetEv {
     Msg(SocketAddr, Vec<String>),
     /// A visitor's pet arrived over TCP (visit id, ok).
     Fetched(u64, bool),
+    /// You answered "add this pet?" (gift id, yes).
+    GiftAnswer(u64, bool),
+    /// A gift finished downloading (gift id, ok).
+    GiftFetched(u64, bool),
 }
+
+/// A copy of our pet offered to another PC, waiting for its answer.
+struct GiftOut { pack: String, to: SocketAddr, deadline: u64 }
+
+/// A pet another PC offers us.
+struct GiftIn { gid: u64, from: SocketAddr, pack: String, origin: String }
 
 /// Our pet away on a visit.
 struct Away { pack: String, peer: SocketAddr, side: char, welcome_by: u64, welcomed: bool, deadline: u64, msg: Option<String> }
@@ -62,6 +72,10 @@ pub struct Lan {
     pub visitor_packs: HashSet<String>,
     next_auto: u64,
     pub error: Option<String>,
+    gifts_out: HashMap<u64, GiftOut>,
+    /// Offers waiting for the question box (one at a time), and the one being asked or downloaded.
+    gifts_in: Vec<GiftIn>,
+    gift_now: Option<GiftIn>,
 }
 
 impl Drop for Lan { fn drop(&mut self) { self.stop.store(true, Ordering::Relaxed); } }
@@ -90,6 +104,7 @@ impl Lan {
             id, stop: stop.clone(), cmd, ev, ev_tx: ev_tx.clone(), serve: serve.clone(), peers: vec![], away: HashMap::new(),
             visitors: HashMap::new(), leaving: HashMap::new(), arriving: HashMap::new(), seen_vids: HashSet::new(),
             visitor_packs: HashSet::new(), next_auto: 0, error: None,
+            gifts_out: HashMap::new(), gifts_in: vec![], gift_now: None,
         };
         let udp = match UdpSocket::bind(("0.0.0.0", PORT)) { Ok(u) => u, Err(e) => { lan.error = Some(format!("UDP {PORT}: {e}")); return lan; } };
         let _ = udp.set_broadcast(true);
@@ -244,6 +259,9 @@ fn unpack(data: Vec<u8>, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Where received pets wait before they are added to img\.
+fn gift_dir(root: &Path) -> PathBuf { root.join("visitors").join(".gifts") }
+
 fn valid_pack_name(n: &str) -> bool {
     !n.is_empty() && n.len() < 100 && !n.contains(['/', '\\', ':']) && n != "." && n != ".." && !n.eq_ignore_ascii_case("unused")
 }
@@ -311,6 +329,7 @@ impl App {
 
     pub fn lan_tick(&mut self) {
         let Some(mut lan) = self.lan.take() else { return };
+        let mut gifts_to_add: Vec<GiftIn> = vec![];
         let t = self.tick_n;
         // network events
         while let Ok(e) = lan.ev.try_recv() {
@@ -327,7 +346,42 @@ impl App {
                         lan.send(a.from, format!("RETURN|{}|{vid}|{}", lan.id, opposite(a.side)));
                     }
                 }
+                NetEv::GiftAnswer(gid, yes) => {
+                    let Some(g) = lan.gift_now.as_ref().filter(|g| g.gid == gid) else { continue };
+                    if !yes {
+                        lan.send(g.from, format!("GIFTREPLY|{}|{gid}|no", lan.id));
+                        lan.gift_now = None;
+                        continue;
+                    }
+                    let (from, pack) = (g.from, g.pack.clone());
+                    let dest = gift_dir(&self.root).join(&pack);
+                    let tx = lan.ev_tx.clone();
+                    std::thread::spawn(move || { let ok = fetch_pack(from, &pack, &dest).is_ok(); let _ = tx.send(NetEv::GiftFetched(gid, ok)); });
+                }
+                NetEv::GiftFetched(gid, ok) => {
+                    let Some(g) = lan.gift_now.take().filter(|g| g.gid == gid) else { continue };
+                    // the answer goes out once the pet is really added (add_gift)
+                    if ok { gifts_to_add.push(g); } else {
+                        lan.send(g.from, format!("GIFTREPLY|{}|{gid}|fail", lan.id));
+                        self.tell(&tf("Couldn't get {} from {}", &[&g.pack, &g.origin]));
+                    }
+                }
             }
+        }
+        // offers: ask one at a time, when you can see it
+        if lan.gift_now.is_none() && !lan.gifts_in.is_empty() && self.fs_settled.is_none() && !self.life.away {
+            let g = lan.gifts_in.remove(0);
+            let q = tf("{} wants to give you a pet: {}.\n\nAdd it to your pets?", &[&g.origin, &g.pack]);
+            let (tx, gid) = (lan.ev_tx.clone(), g.gid);
+            lan.gift_now = Some(g);
+            std::thread::spawn(move || { let _ = tx.send(NetEv::GiftAnswer(gid, crate::win::ask_yes_no(&q))); });
+        }
+        // our offers nobody answered
+        let stale: Vec<u64> = lan.gifts_out.iter().filter(|(_, g)| t > g.deadline).map(|(k, _)| *k).collect();
+        for gid in stale {
+            let g = lan.gifts_out.remove(&gid).unwrap();
+            self.stop_serving_gift(&mut lan, &g.pack);
+            self.tell(&tf("{} didn't answer, {} stays only here", &[&lan.peer_name(g.to), &g.pack]));
         }
         lan.peers.retain(|p| p.seen.elapsed() < Duration::from_secs(12));
 
@@ -434,6 +488,57 @@ impl App {
             lan.next_auto = t + if self.settings.debug { 40 * 25 } else { 40 * 60 * (4 + (random() * 6.0) as u64) };
         }
         self.lan = Some(lan);
+        for g in gifts_to_add { self.add_gift(g); }
+    }
+
+    /// Offer a copy of this pet to another PC; it is added there if they say yes.
+    pub fn give_pet(&mut self, i: usize, to: SocketAddr) {
+        let pack = self.packs[self.pets[i].m.pack].name.clone();
+        let id = self.pets[i].m.id;
+        let Some(lan) = &mut self.lan else { return };
+        if lan.visitor_packs.contains(&pack) { return; }
+        let gid = (random() * 1e15) as u64 + 1;
+        lan.serve.lock().unwrap().insert(pack.clone());
+        for _ in 0..2 { lan.send(to, format!("GIFT|{}|{gid}|{}", lan.id, clean(&pack))); }
+        // they may be away from the PC: wait up to 10 minutes
+        lan.gifts_out.insert(gid, GiftOut { pack: pack.clone(), to, deadline: self.tick_n + 40 * 60 * 10 });
+        let peer = lan.peer_name(to);
+        self.lan_dbg(&format!("offered {pack} to {to} (gift {gid})"));
+        self.say_text(id, &tf("Asking {} if they want me...", &[&peer]), 160);
+    }
+
+    /// A gift's files are no longer needed for download (unless the same pet is also out visiting).
+    fn stop_serving_gift(&mut self, lan: &mut Lan, pack: &str) {
+        let busy = lan.away.values().any(|a| a.pack == pack) || lan.gifts_out.values().any(|g| g.pack == pack);
+        if !busy { lan.serve.lock().unwrap().remove(pack); }
+    }
+
+    /// Copy a received pet into img\ and let it walk in.
+    fn add_gift(&mut self, g: GiftIn) {
+        let src = gift_dir(&self.root).join(&g.pack);
+        let rep = crate::importer::import(&src, &self.root);
+        let _ = std::fs::remove_dir_all(&src);
+        if let Some(lan) = &self.lan {
+            lan.send(g.from, format!("GIFTREPLY|{}|{}|{}", lan.id, g.gid, if rep.added.is_empty() { "fail" } else { "ok" }));
+        }
+        if rep.added.is_empty() {
+            self.tell(&tf("Couldn't add {}: {}", &[&g.pack, &rep.failed.join("; ")]));
+            return;
+        }
+        let want = self.settings.start_pets.trim().to_string();
+        if !(want.is_empty() || want.eq_ignore_ascii_case("all")) {
+            self.settings.start_pets = format!("{want},{}", rep.added.join(","));
+            self.settings.save();
+        }
+        self.reload_keep();
+        for n in &rep.added {
+            if let Some(pk) = self.pack_index(n) {
+                if let Some(id) = self.walk_in(pk, if random() < 0.5 { 'L' } else { 'R' }) {
+                    self.say_text(id, &tf("Hi! {} sent me. I live here now", &[&g.origin]), 240);
+                }
+            }
+        }
+        self.lan_dbg(&format!("gift {} from {} added", g.pack, g.origin));
     }
 
     fn come_home(&mut self, lan: &mut Lan, a: Away, side: char) {
@@ -468,6 +573,31 @@ impl App {
                 let tx = lan.ev_tx.clone();
                 lan.arriving.insert(vid, a);
                 std::thread::spawn(move || { let ok = fetch_pack(from, &pack, &dest).is_ok(); let _ = tx.send(NetEv::Fetched(vid, ok)); });
+            }
+            "GIFT" if m.len() >= 4 => {
+                if !lan.seen_vids.insert(vid) { return; }
+                let pack = m[3].clone();
+                if !valid_pack_name(&pack) { return; }
+                let origin = lan.peer_name(from);
+                if self.root.join("img").join(&pack).is_dir() {
+                    lan.send(from, format!("GIFTREPLY|{}|{vid}|have", lan.id));
+                    return;
+                }
+                self.lan_dbg(&format!("{origin} offers {pack} (gift {vid})"));
+                lan.gifts_in.push(GiftIn { gid: vid, from, pack, origin });
+            }
+            "GIFTREPLY" if m.len() >= 4 => {
+                // only the PC we offered it to answers
+                let Some(g) = lan.gifts_out.get(&vid).filter(|g| g.to.ip() == from.ip()) else { return };
+                let (pack, peer) = (g.pack.clone(), lan.peer_name(from));
+                lan.gifts_out.remove(&vid);
+                self.stop_serving_gift(lan, &pack);
+                self.tell(&match m[3].as_str() {
+                    "ok" => tf("{} now lives on {} too!", &[&pack, &peer]),
+                    "have" => tf("{} already has {}", &[&peer, &pack]),
+                    "no" => tf("{} said no thanks to {}", &[&peer, &pack]),
+                    _ => tf("Couldn't send {} to {}", &[&pack, &peer]),
+                });
             }
             "WELCOME" => { if let Some(a) = lan.away.get_mut(&vid).filter(|a| a.peer.ip() == from.ip()) { a.welcomed = true; } }
             "RETURN" if m.len() >= 4 => {
