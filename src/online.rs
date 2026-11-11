@@ -20,6 +20,8 @@ pub enum Source {
     Image(String),
     /// URL that returns JSON with a picture link in `field`.
     Json(String, String),
+    /// A subreddit through meme-api.com: one of its better posts.
+    Reddit(String),
 }
 
 /// `reddit <sub>`, `json <url> <field>`, `image <url>`; `#` starts a comment.
@@ -30,7 +32,7 @@ pub fn parse_sources(text: &str) -> Vec<Source> {
         .filter_map(|l| {
             let mut it = l.split_whitespace();
             match (it.next()?.to_ascii_lowercase().as_str(), it.next(), it.next()) {
-                ("reddit", Some(sub), _) => Some(Source::Json(format!("https://meme-api.com/gimme/{}", sub.trim_start_matches("r/")), "url".into())),
+                ("reddit", Some(sub), _) => Some(Source::Reddit(sub.trim_start_matches("r/").into())),
                 ("json", Some(url), Some(field)) => Some(Source::Json(url.into(), field.into())),
                 ("image", Some(url), _) => Some(Source::Image(url.into())),
                 _ => None,
@@ -58,7 +60,10 @@ impl Online {
     pub fn start() -> Online {
         let shared = Arc::new(Mutex::new(Shared::default()));
         let s = shared.clone();
-        std::thread::spawn(move || loop {
+        std::thread::spawn(move || {
+          // recently shown picture links, so the same meme doesn't come twice
+          let mut seen: Vec<String> = Vec::new();
+          loop {
             let src = {
                 let g = s.lock().unwrap();
                 if !g.enabled || g.sources.is_empty() || g.queue.len() >= READY { None } else {
@@ -66,7 +71,7 @@ impl Online {
                 }
             };
             let Some(src) = src else { std::thread::sleep(Duration::from_secs(2)); continue };
-            match fetch(&src) {
+            match fetch(&src, &mut seen) {
                 Ok(p) => {
                     let mut g = s.lock().unwrap();
                     if g.enabled { g.queue.push(p); }
@@ -78,6 +83,7 @@ impl Online {
                     std::thread::sleep(Duration::from_secs(10));
                 }
             }
+          }
         });
         Online { shared }
     }
@@ -94,9 +100,43 @@ impl Online {
     pub fn take_error(&self) -> Option<String> { self.shared.lock().unwrap().last_error.take() }
 }
 
-fn fetch(src: &Source) -> Result<Pic, String> {
+/// Posts in a meme-api.com answer: (picture link, upvotes), without adult/spoiler posts and animations.
+fn reddit_posts(text: &str) -> Vec<(String, u64)> {
+    let mut out = Vec::new();
+    let starts: Vec<usize> = text.match_indices("\"postLink\"").map(|(i, _)| i).collect();
+    for (k, &a) in starts.iter().enumerate() {
+        let item = &text[a..starts.get(k + 1).copied().unwrap_or(text.len())];
+        let compact: String = item.chars().filter(|c| !c.is_whitespace()).collect();
+        if compact.contains("\"nsfw\":true") || compact.contains("\"spoiler\":true") { continue; }
+        let Some(url) = json_str(item, "url") else { continue };
+        let low = url.to_ascii_lowercase();
+        if !(low.ends_with(".jpg") || low.ends_with(".jpeg") || low.ends_with(".png")) { continue; }
+        let ups = compact.split("\"ups\":").nth(1).map(|r| r.chars().take_while(|c| c.is_ascii_digit()).collect::<String>()).and_then(|n| n.parse().ok()).unwrap_or(0);
+        out.push((url, ups));
+    }
+    out
+}
+
+/// One of the better posts: the most upvoted few that weren't shown lately.
+fn pick_post(mut posts: Vec<(String, u64)>, seen: &[String]) -> Option<String> {
+    posts.retain(|(u, _)| !seen.contains(u));
+    posts.sort_by(|a, b| b.1.cmp(&a.1));
+    posts.truncate(5);
+    if posts.is_empty() { return None; }
+    Some(posts.swap_remove((crate::expr::random() * posts.len() as f64) as usize % posts.len()).0)
+}
+
+fn fetch(src: &Source, seen: &mut Vec<String>) -> Result<Pic, String> {
     let link = match src {
         Source::Image(u) => u.clone(),
+        Source::Reddit(sub) => {
+            let u = format!("https://meme-api.com/gimme/{sub}/30");
+            let body = http_get(&u, 2 << 20)?;
+            let link = pick_post(reddit_posts(&String::from_utf8_lossy(&body)), seen).ok_or_else(|| format!("no new pictures in r/{sub}"))?;
+            seen.push(link.clone());
+            if seen.len() > 200 { seen.remove(0); }
+            link
+        }
         Source::Json(u, field) => {
             let body = http_get(u, 1 << 20)?;
             let text = String::from_utf8_lossy(&body);
@@ -205,12 +245,30 @@ mod tests {
         let s = super::parse_sources("# c\nreddit Pikabu\njson https://a.b/c message\nimage https://x.y/z\n");
         assert_eq!(s.len(), 3);
     }
+
+    #[test]
+    fn picks_popular_pictures() {
+        let t = r#"{"count":4,"memes":[
+            {"postLink":"a","url":"https://i.redd.it/low.jpg","nsfw":false,"spoiler":false,"ups":3},
+            {"postLink":"b","url":"https://i.redd.it/top.png","nsfw":false,"spoiler":false,"ups":9000},
+            {"postLink":"c","url":"https://i.redd.it/adult.jpg","nsfw":true,"spoiler":false,"ups":99999},
+            {"postLink":"d","url":"https://i.redd.it/anim.gif","nsfw":false,"spoiler":false,"ups":50000}]}"#;
+        let posts = super::reddit_posts(t);
+        assert_eq!(posts, vec![("https://i.redd.it/low.jpg".to_string(), 3), ("https://i.redd.it/top.png".to_string(), 9000)]);
+        // the best one wins among two; once shown, the other comes next
+        let seen = vec!["https://i.redd.it/top.png".to_string()];
+        assert_eq!(super::pick_post(posts.clone(), &seen).unwrap(), "https://i.redd.it/low.jpg");
+        assert_eq!(super::pick_post(posts, &[]).map(|u| u.contains("redd.it")), Some(true));
+    }
     /// POPETO_NET_TEST=1 cargo test fetch_live -- --nocapture
     #[test]
     fn fetch_live() {
         if std::env::var("POPETO_NET_TEST").is_err() { return; }
-        for s in super::parse_sources("reddit Pikabu\nreddit CrappyDesign\nreddit blursedimages") {
-            match super::fetch(&s) {
+        let mut seen = Vec::new();
+        for s in super::parse_sources(include_str!("../assets/pranks/universal/online.txt")).into_iter()
+            .chain(super::parse_sources(include_str!("../assets/pranks/en/online.txt")))
+            .chain(super::parse_sources(include_str!("../assets/pranks/ru/online.txt"))) {
+            match super::fetch(&s, &mut seen) {
                 Ok(p) => println!("{s:?}: {}x{}", p.w, p.h),
                 Err(e) => println!("{s:?}: ERR {e}"),
             }

@@ -1,8 +1,9 @@
 # Fresh pictures from the internet (Settings > Pranks). Kept in memory only, never saved.
 # One source per line:
-#   reddit <subreddit>      a random picture post (via meme-api.com); adult and spoiler posts are skipped
+#   reddit <subreddit>      a popular picture post (via meme-api.com); adult and spoiler posts are skipped
 #   json <url> <field>      any API answering JSON with a picture link in <field>
 #   image <url>             a URL that returns a random PNG/JPEG picture
 # English memes:
-reddit wholesomememes
-reddit me_irl
+reddit memes
+reddit Memes_Of_The_Dank
+reddit ProgrammerHumor

@@ -331,6 +331,18 @@ pub fn ensure_files(root: &Path) -> PathBuf {
         let _ = std::fs::remove_dir(&od);
     }
     let put = |p: PathBuf, data: &[u8]| { if !p.exists() { let _ = std::fs::write(p, data); } };
+    // picture sources that came with older versions and were never edited: replace with today's
+    let renew = |p: PathBuf, old: &[&str], data: &str| {
+        let Ok(cur) = std::fs::read_to_string(&p) else { return };
+        let mut lines: Vec<String> = cur.lines().map(|l| l.trim().to_ascii_lowercase()).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+        lines.sort();
+        let mut was: Vec<String> = old.iter().map(|l| l.to_ascii_lowercase()).collect();
+        was.sort();
+        if lines == was { let _ = std::fs::write(&p, data); }
+    };
+    renew(uni.join("online.txt"), &["reddit CrappyDesign", "reddit blursedimages"], UNIVERSAL_ONLINE);
+    renew(dir.join("en").join("online.txt"), &["reddit wholesomememes", "reddit me_irl"], default_texts("en").2);
+    renew(dir.join("ru").join("online.txt"), &["reddit Pikabu"], default_texts("ru").2);
     put(dir.join("README.txt"), README.as_bytes());
     put(uni.join("notes.txt"), UNIVERSAL_NOTES.as_bytes());
     put(uni.join("talk.txt"), UNIVERSAL_TALK.as_bytes());
