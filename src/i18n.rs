@@ -115,7 +115,7 @@ pub fn t(s: &'static str) -> &'static str {
         "Pets talk about what they do (speech bubbles)" => "Питомцы говорят о том, что делают (реплики)",
         "Where to find pets (click a link, download in the browser):" => "Где найти питомцев (нажмите на ссылку, скачивайте в браузере):",
         "Big community library, no account needed. Popeto converts its pets automatically." => "Большая библиотека от сообщества, без регистрации. Popeto сам конвертирует её питомцев.",
-        "Hundreds of Pokemon and other characters. Download via an ad page or Patreon." => "Сотни покемонов и других персонажей. Скачивание через страницу с рекламой или Patreon.",
+        "Hundreds of Pokemon and other characters; opens the free ones. Download via the site's ad page." => "Сотни покемонов и других персонажей; открываются бесплатные. Скачивание через страницу сайта с рекламой.",
         "Home of Shimeji-ee and its official pets." => "Дом Shimeji-ee и его официальных питомцев.",
         "Community: new pets, requests and help." => "Сообщество: новые питомцы, просьбы и помощь.",
         "The most pets of all; downloading needs a free account." => "Больше всего питомцев; для скачивания нужен бесплатный аккаунт.",

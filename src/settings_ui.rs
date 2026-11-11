@@ -31,7 +31,7 @@ pub const CMD_ADD_PETS: usize = 19;
 /// Where to find pets: (name, address, description). Shown on the Pets tab and in the tray menu.
 pub const SITES: [(&str, &str, &str); 5] = [
     ("shimeji.org", "https://shimeji.org/", "Big community library, no account needed. Popeto converts its pets automatically."),
-    ("Cachomon", "https://cachomon.com/grid.php?g=1", "Hundreds of Pokemon and other characters. Download via an ad page or Patreon."),
+    ("Cachomon", "https://cachomon.com/grid.php?g=1&m=0&a=0&t=0&f=1", "Hundreds of Pokemon and other characters; opens the free ones. Download via the site's ad page."),
     ("Kilkakon", "https://kilkakon.com/shimeji", "Home of Shimeji-ee and its official pets."),
     ("Reddit r/shimeji", "https://www.reddit.com/r/shimeji/", "Community: new pets, requests and help."),
     ("DeviantArt", "https://www.deviantart.com/search?q=shimeji", "The most pets of all; downloading needs a free account."),
