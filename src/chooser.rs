@@ -288,6 +288,15 @@ unsafe fn child(parent: HWND, class: &str, text: &str, style: u32, x: i32, y: i3
 
 /// Show the chooser modally. Returns the new selection and the "show at startup" flag, or None if cancelled.
 pub fn run(items: &[Choice], show_at_startup: bool, icon: HICON) -> Option<(Vec<bool>, bool)> {
+    run_with(items, t("Popeto - choose your pets"), "OK", Some(show_at_startup), icon)
+}
+
+/// Same grid for other picks (e.g. pets to give away): own title and OK text, no startup box.
+pub fn pick(items: &[Choice], title: &str, ok: &str, icon: HICON) -> Option<Vec<bool>> {
+    run_with(items, title, ok, None, icon).map(|(sel, _)| sel)
+}
+
+fn run_with(items: &[Choice], title: &str, ok: &str, show_at_startup: Option<bool>, icon: HICON) -> Option<(Vec<bool>, bool)> {
     if items.is_empty() { return None; }
     register();
     unsafe {
@@ -329,7 +338,7 @@ pub fn run(items: &[Choice], show_at_startup: bool, icon: HICON) -> Option<(Vec<
         let mut work: RECT = std::mem::zeroed();
         SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut work as *mut _ as *mut _, 0);
         let (x, y) = (work.left + (work.right - work.left - ww) / 2, work.top + (work.bottom - work.top - wh) / 2);
-        let (cls, title) = (wide(MAIN_CLASS), wide(t("Popeto - choose your pets")));
+        let (cls, title) = (wide(MAIN_CLASS), wide(title));
         let hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_APPWINDOW, cls.as_ptr(), title.as_ptr(), style, x, y, ww, wh, null_mut(), null_mut(), GetModuleHandleW(null()), null());
         if !icon.is_null() {
             SendMessageW(hwnd, WM_SETICON, ICON_BIG as WPARAM, icon as LPARAM);
@@ -342,9 +351,15 @@ pub fn run(items: &[Choice], show_at_startup: bool, icon: HICON) -> Option<(Vec<
         let gap = px(s, 8);
         child(hwnd, "BUTTON", t("Select all"), WS_TABSTOP | BS_PUSHBUTTON as u32, m, bar_y, bw, bh, ID_ALL, f);
         child(hwnd, "BUTTON", t("Select none"), WS_TABSTOP | BS_PUSHBUTTON as u32, m + bw + gap, bar_y, bw, bh, ID_NONE, f);
-        let chk = child(hwnd, "BUTTON", t("Show at startup"), WS_TABSTOP | BS_AUTOCHECKBOX as u32, m + 2 * (bw + gap) + gap, bar_y, px(s, 150), bh, ID_STARTUP, f);
-        SendMessageW(chk, BM_SETCHECK, if show_at_startup { 1 } else { 0 }, 0);
-        st.ok = child(hwnd, "BUTTON", "OK", WS_TABSTOP | BS_DEFPUSHBUTTON as u32, client_w - m - 2 * bw - gap, bar_y, bw, bh, ID_OK, f);
+        let chk = match show_at_startup {
+            Some(on) => {
+                let c = child(hwnd, "BUTTON", t("Show at startup"), WS_TABSTOP | BS_AUTOCHECKBOX as u32, m + 2 * (bw + gap) + gap, bar_y, px(s, 150), bh, ID_STARTUP, f);
+                SendMessageW(c, BM_SETCHECK, if on { 1 } else { 0 }, 0);
+                c
+            }
+            None => null_mut(),
+        };
+        st.ok = child(hwnd, "BUTTON", ok, WS_TABSTOP | BS_DEFPUSHBUTTON as u32, client_w - m - 2 * bw - gap, bar_y, bw, bh, ID_OK, f);
         child(hwnd, "BUTTON", t("Cancel"), WS_TABSTOP | BS_PUSHBUTTON as u32, client_w - m - bw, bar_y, bw, bh, ID_CANCEL, f);
         ST.with(|x| *x.borrow_mut() = Some(st));
         scroll_to(0);
@@ -361,7 +376,7 @@ pub fn run(items: &[Choice], show_at_startup: bool, icon: HICON) -> Option<(Vec<
                 DispatchMessageW(&msg);
             }
         }
-        let startup = SendMessageW(chk, BM_GETCHECK, 0, 0) == 1;
+        let startup = !chk.is_null() && SendMessageW(chk, BM_GETCHECK, 0, 0) == 1;
         DestroyWindow(hwnd);
         let st = ST.with(|x| x.borrow_mut().take()).unwrap();
         for t in &st.tiles { if !t.bmp.is_null() { DeleteObject(t.bmp); } }

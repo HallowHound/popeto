@@ -143,6 +143,7 @@ const ID_VISIT_ANY: usize = 28;
 const ID_VISIT: usize = 4200;
 const ID_VISIT_MSG: usize = 4300;
 const ID_GIFT: usize = 4400;
+const ID_GIFT_MANY: usize = 4500;
 const ID_ADD_PETS: usize = 19;
 const ID_PRANK_LEVEL: usize = 40;
 const ID_PRANK_TOGGLE: usize = 50;
@@ -542,6 +543,11 @@ impl App {
         m.disabled(&tf("Popeto - {} pet(s)", &[&self.pets.len()]));
         if let Some(l) = &self.lan {
             m.disabled(&tf("Network: {} PC(s) nearby, {} pet(s) away", &[&l.peers.len(), &l.away_count()]));
+            if !l.peers.is_empty() {
+                let gm = Menu::new();
+                for (k, p) in l.peers.iter().enumerate() { gm.item(ID_GIFT_MANY + k, &p.name, false); }
+                m.sub(t("Give pets to"), gm);
+            }
         }
         m.sep();
         for (k, (_, names)) in self.pending.iter().enumerate() {
@@ -572,8 +578,30 @@ impl App {
             .item(ID_CHECK_UPDATE, &tf("Check for updates (now {})", &[&update::VERSION]), false)
             .sep()
             .item(ID_EXIT, t("Exit"), false);
+        let peers: Vec<(String, std::net::SocketAddr)> = self.lan.as_ref().map(|l| l.peers.iter().map(|p| (p.name.clone(), p.addr)).collect()).unwrap_or_default();
         let id = m.run(self.tray);
+        if id >= ID_GIFT_MANY && id < ID_GIFT_MANY + peers.len() {
+            let (name, addr) = peers[id - ID_GIFT_MANY].clone();
+            self.choose_gifts(&name, addr);
+            return;
+        }
         self.command(id, None);
+    }
+
+    /// Pick several pets in the chooser grid and offer copies of them to another PC.
+    fn choose_gifts(&mut self, peer: &str, to: std::net::SocketAddr) {
+        let visitors = self.lan.as_ref().map(|l| l.visitor_packs.clone()).unwrap_or_default();
+        let own: Vec<usize> = (0..self.packs.len()).filter(|&i| !visitors.contains(&self.packs[i].name)).collect();
+        let items: Vec<chooser::Choice> = own.iter().map(|&i| {
+            let p = &self.packs[i];
+            let pv = p.dir.join("preview.png");
+            let preview = if pv.exists() { Some(pv) } else { p.icon_img.map(|k| p.images[k].clone()) };
+            chooser::Choice { name: p.name.clone(), preview, selected: false }
+        }).collect();
+        let Some(sel) = chooser::pick(&items, &tf("Give pets to {}", &[&peer]), t("Give"), self.icon) else { return };
+        let packs: Vec<String> = own.iter().zip(&sel).filter(|(_, s)| **s).map(|(&i, _)| self.packs[i].name.clone()).collect();
+        let n = packs.len();
+        if n > 0 && self.give_pets(packs, to) { self.tell(&tf("Asking {} if they want {} pet(s)...", &[&peer, &n])); }
     }
 
     fn pet_menu(&mut self, i: usize) {

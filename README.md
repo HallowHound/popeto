@@ -41,7 +41,8 @@ no installer. Copy the folder anywhere and run `Popeto.exe` (~1 MB, ~15 MB RAM).
   network, then come back. Discovery by UDP broadcast on port 47811 (or listed addresses); a pet the other PC
   doesn't have is sent as a zip over TCP for the visit (`visitors\`, images/xml/wav only, only while visiting).
   Right click a pet > **Send with a message**: it carries your note (up to 300 characters) onto the other screen.
-  Right click a pet > **Give a copy to** > PC: that PC is asked, and on yes the pet is added to its pets for good.
+  Right click a pet > **Give a copy to** > PC, or tray > **Give pets to** > PC to pick several: that PC is asked once,
+  and on yes the pets are added to its pets for good (ones it already has are skipped).
 - **Pranks** (goose-style, all off by default): pets bring notes and pictures, leave muddy footprints, grab
   the cursor (shake to escape), talk in speech bubbles, honk, stomp/minimize windows, play with a ball.
   Panic hotkey (default `Ctrl+Shift+F12`) hides everything. No keyboard/mouse hooks, no injection.
