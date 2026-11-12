@@ -14,6 +14,7 @@ mod extras;
 mod icons;
 mod importer;
 mod lan;
+mod net;
 mod life;
 mod i18n;
 mod mascot;
@@ -136,6 +137,8 @@ const ID_TIMER_CANCEL: usize = 120;
 const ID_CHECK_UPDATE: usize = 130;
 const ID_INSTALL_UPDATE: usize = 131;
 const ID_AUTOSTART: usize = 132;
+/// Same number as settings_ui::CMD_LAN_TEST.
+const ID_LAN_TEST: usize = 140;
 const ID_NAME: usize = 25;
 const ID_KEEP_VISITOR: usize = 26;
 const ID_SEND_HOME: usize = 27;
@@ -697,6 +700,7 @@ impl App {
         match id {
             ID_EXIT => self.quit = true,
             ID_CHECK_UPDATE => self.check_updates(true),
+            ID_LAN_TEST => self.lan_test(),
             ID_INSTALL_UPDATE => self.install_update(),
             ID_DISMISS_ALL => while !self.pets.is_empty() { self.remove(0); },
             ID_RESTORE => {

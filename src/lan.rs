@@ -1,36 +1,29 @@
-//! LAN visits: pets walk off your screen and show up on another PC running Popeto on the same network.
-//! Popetos find each other with UDP broadcasts (plus addresses you list). A visiting pet the other PC
-//! doesn't have is sent over TCP as a zip, kept in `visitors\` and loaded only for the visit.
-//! Only pets that are visiting right now can be downloaded; received files are images, xml and wav only.
+//! LAN visits: pets walk off your screen and show up on another PC running Popeto on the same network,
+//! carry messages there, or move in for good as gifts. Finding PCs and moving pet files is net.rs (one UDP
+//! port); this file is what pets and people see. A visiting pet the other PC doesn't have is sent as a zip,
+//! kept in `visitors\` and loaded only for the visit. Only pets that are visiting or being given right now
+//! can be downloaded; received files are images, xml and wav only.
 
 use crate::expr::random;
 use crate::i18n::tf;
 use crate::pranks::{pick, ACT_WALK};
 use crate::App;
+use crate::net::{Ev, Net, MAX_ZIP};
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
+use std::io::Write;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub const PORT: u16 = 47811;
-const MAGIC: &str = "POPETO1";
-const MAX_ZIP: u64 = 40 << 20;
 
 pub struct Peer { pub id: u64, pub name: String, pub addr: SocketAddr, seen: Instant }
 
-enum NetEv {
-    Peer(u64, String, SocketAddr),
-    Msg(SocketAddr, Vec<String>),
-    /// A visitor's pet arrived over TCP (visit id, ok).
-    Fetched(u64, bool),
-    /// You answered "add this pet?" (gift id, yes).
+/// Answers from the question box thread.
+enum Local {
+    /// You answered "add these pets?" (gift id, yes).
     GiftAnswer(u64, bool),
-    /// A gift finished downloading (gift id, ok).
-    GiftFetched(u64, bool),
 }
 
 /// Copies of our pets offered to another PC, waiting for its answer.
@@ -60,12 +53,9 @@ struct Arrival { from: SocketAddr, origin: String, pack: String, side: char, nam
 
 pub struct Lan {
     id: u64,
-    stop: Arc<AtomicBool>,
-    cmd: Sender<(SocketAddr, String)>,
-    ev: Receiver<NetEv>,
-    ev_tx: Sender<NetEv>,
-    /// Packs that may be downloaded right now (our pets on a visit).
-    serve: Arc<Mutex<HashSet<String>>>,
+    net: Net,
+    ev: Receiver<Local>,
+    ev_tx: Sender<Local>,
     pub peers: Vec<Peer>,
     away: HashMap<u64, Away>,
     visitors: HashMap<u32, Visitor>,
@@ -80,9 +70,10 @@ pub struct Lan {
     /// Offers waiting for the question box (one at a time), and the one being asked or downloaded.
     gifts_in: Vec<GiftIn>,
     gift_now: Option<GiftIn>,
+    /// Downloads of the gift being accepted: transfer id -> pet; and whether any of them worked.
+    gift_xfers: HashMap<u64, String>,
+    gift_ok: bool,
 }
-
-impl Drop for Lan { fn drop(&mut self) { self.stop.store(true, Ordering::Relaxed); } }
 
 fn clean(s: &str) -> String { s.replace(['|', '\n', '\r'], " ").chars().take(60).collect() }
 
@@ -100,66 +91,20 @@ fn opposite(c: char) -> char { if c == 'L' { 'R' } else { 'L' } }
 impl Lan {
     pub fn start(root: &Path, name: String, manual: Vec<String>) -> Lan {
         let id = (random() * 1e15) as u64 + 1;
-        let stop = Arc::new(AtomicBool::new(false));
-        let (cmd, cmd_rx) = channel::<(SocketAddr, String)>();
-        let (ev_tx, ev) = channel::<NetEv>();
-        let serve = Arc::new(Mutex::new(HashSet::new()));
-        let mut lan = Lan {
-            id, stop: stop.clone(), cmd, ev, ev_tx: ev_tx.clone(), serve: serve.clone(), peers: vec![], away: HashMap::new(),
+        let net = Net::start(root, id, clean(&name), manual, PORT, PORT);
+        let (ev_tx, ev) = channel();
+        Lan {
+            id, error: net.error.clone(), net, ev, ev_tx, peers: vec![], away: HashMap::new(),
             visitors: HashMap::new(), leaving: HashMap::new(), arriving: HashMap::new(), seen_vids: HashSet::new(),
-            visitor_packs: HashSet::new(), next_auto: 0, error: None,
-            gifts_out: HashMap::new(), gifts_in: vec![], gift_now: None,
-        };
-        let udp = match UdpSocket::bind(("0.0.0.0", PORT)) { Ok(u) => u, Err(e) => { lan.error = Some(format!("UDP {PORT}: {e}")); return lan; } };
-        let _ = udp.set_broadcast(true);
-        let _ = udp.set_read_timeout(Some(Duration::from_millis(200)));
-        match TcpListener::bind(("0.0.0.0", PORT)) {
-            Ok(tcp) => {
-                let _ = tcp.set_nonblocking(true);
-                let (root, stop, serve) = (root.to_path_buf(), stop.clone(), serve.clone());
-                std::thread::spawn(move || {
-                    while !stop.load(Ordering::Relaxed) {
-                        match tcp.accept() {
-                            Ok((s, _)) => { let (root, serve) = (root.clone(), serve.clone()); std::thread::spawn(move || { let _ = serve_pack(s, &root, &serve); }); }
-                            Err(_) => std::thread::sleep(Duration::from_millis(150)),
-                        }
-                    }
-                });
-            }
-            Err(e) => lan.error = Some(format!("TCP {PORT}: {e}")),
+            visitor_packs: HashSet::new(), next_auto: 0,
+            gifts_out: HashMap::new(), gifts_in: vec![], gift_now: None, gift_xfers: HashMap::new(), gift_ok: false,
         }
-        let name = clean(&name);
-        std::thread::spawn(move || {
-            let mut last_hello = Instant::now() - Duration::from_secs(10);
-            let mut buf = [0u8; 2048];
-            while !stop.load(Ordering::Relaxed) {
-                if last_hello.elapsed() > Duration::from_secs(3) {
-                    last_hello = Instant::now();
-                    let hello = format!("{MAGIC}|HELLO|{id}|{name}");
-                    let _ = udp.send_to(hello.as_bytes(), ("255.255.255.255", PORT));
-                    for m in &manual {
-                        let host = if m.contains(':') { m.clone() } else { format!("{m}:{PORT}") };
-                        if let Ok(addrs) = host.to_socket_addrs() { for a in addrs.filter(|a| a.is_ipv4()) { let _ = udp.send_to(hello.as_bytes(), a); } }
-                    }
-                }
-                while let Ok((to, msg)) = cmd_rx.try_recv() { let _ = udp.send_to(format!("{MAGIC}|{msg}").as_bytes(), to); }
-                let Ok((n, from)) = udp.recv_from(&mut buf) else { continue };
-                let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                let parts: Vec<String> = text.split('|').map(|s| s.to_string()).collect();
-                if parts.len() < 3 || parts[0] != MAGIC { continue; }
-                let sender: u64 = parts[2].parse().unwrap_or(0);
-                if sender == id || sender == 0 { continue; }
-                if parts[1] == "HELLO" {
-                    let _ = ev_tx.send(NetEv::Peer(sender, parts.get(3).cloned().unwrap_or_default(), from));
-                } else {
-                    let _ = ev_tx.send(NetEv::Msg(from, parts[1..].to_vec()));
-                }
-            }
-        });
-        lan
     }
 
-    fn send(&self, to: SocketAddr, msg: String) { let _ = self.cmd.send((to, msg)); }
+    /// Ask whether anything answers at this address (Settings > Network > Test).
+    pub fn probe(&self, to: SocketAddr) { self.net.probe(to); }
+
+    fn send(&self, to: SocketAddr, msg: String) { self.net.send(to, msg); }
     pub fn peer_name(&self, a: SocketAddr) -> String {
         self.peers.iter().find(|p| p.addr.ip() == a.ip()).map(|p| p.name.clone()).unwrap_or_else(|| a.ip().to_string())
     }
@@ -175,23 +120,8 @@ impl Lan {
     pub fn busy(&self, pet: u32) -> bool { self.leaving.contains_key(&pet) }
 }
 
-/// TCP: "GET <pack>\n" -> 8-byte length + zip of that pet (only while it is visiting).
-fn serve_pack(mut s: TcpStream, root: &Path, serve: &Mutex<HashSet<String>>) -> std::io::Result<()> {
-    // accepted sockets inherit the listener's non-blocking mode on Windows
-    s.set_nonblocking(false)?;
-    s.set_read_timeout(Some(Duration::from_secs(5)))?;
-    let mut line = Vec::new();
-    let mut b = [0u8; 1];
-    while line.len() < 200 && s.read(&mut b)? == 1 && b[0] != b'\n' { line.push(b[0]); }
-    let line = String::from_utf8_lossy(&line).to_string();
-    let pack = line.strip_prefix("GET ").unwrap_or("").trim().to_string();
-    let ok = serve.lock().map(|s| s.contains(&pack)).unwrap_or(false);
-    let data = if ok { zip_pack(root, &pack).unwrap_or_default() } else { vec![] };
-    s.write_all(&(data.len() as u64).to_le_bytes())?;
-    s.write_all(&data)
-}
-
-fn zip_pack(root: &Path, pack: &str) -> Option<Vec<u8>> {
+/// Zip of a pet folder for sending (images, xml and wav only).
+pub(crate) fn zip_pack(root: &Path, pack: &str) -> Option<Vec<u8>> {
     let dir = root.join("img").join(pack);
     if !dir.is_dir() { return None; }
     let mut out = std::io::Cursor::new(Vec::new());
@@ -230,21 +160,8 @@ fn allowed(p: &Path) -> bool {
     p.extension().map(|x| ["png", "xml", "wav"].iter().any(|e| x.eq_ignore_ascii_case(e))).unwrap_or(false)
 }
 
-/// Download a visiting pet into visitors\<pack>.
-fn fetch_pack(from: SocketAddr, pack: &str, dest: &Path) -> Result<(), String> {
-    let mut s = TcpStream::connect_timeout(&SocketAddr::new(from.ip(), PORT), Duration::from_secs(4)).map_err(|e| e.to_string())?;
-    s.set_read_timeout(Some(Duration::from_secs(20))).map_err(|e| e.to_string())?;
-    s.write_all(format!("GET {pack}\n").as_bytes()).map_err(|e| e.to_string())?;
-    let mut len = [0u8; 8];
-    s.read_exact(&mut len).map_err(|e| e.to_string())?;
-    let len = u64::from_le_bytes(len);
-    if len == 0 || len > MAX_ZIP { return Err("refused".into()); }
-    let mut data = Vec::new();
-    s.take(len).read_to_end(&mut data).map_err(|e| e.to_string())?;
-    unpack(data, dest)
-}
-
-fn unpack(data: Vec<u8>, dest: &Path) -> Result<(), String> {
+/// Unpack a received pet into `dest`, keeping only images, xml and wav.
+pub(crate) fn unpack(data: Vec<u8>, dest: &Path) -> Result<(), String> {
     let mut a = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_dir_all(dest);
     let mut total = 0u64;
@@ -286,6 +203,16 @@ impl App {
     }
 
     fn lan_dbg(&mut self, s: &str) { if self.settings.debug { self.log.push(format!("[lan t={}] {s}", self.tick_n)); } }
+
+    /// Settings > Network > Test a PC: does anything answer at an address you type.
+    pub fn lan_test(&mut self) {
+        let Some(lan) = &self.lan else { self.tell(crate::i18n::t("Turn on network visits first (Settings > Network).")); return };
+        let Some(host) = crate::win::input_box(self.tray, crate::i18n::t("Test a PC"), crate::i18n::t("Address or name of the other PC:"), "") else { return };
+        match crate::net::resolve(&host, PORT).first() {
+            Some(a) => { lan.probe(*a); self.tell(&tf("Saying hello to {}...", &[&a.ip()])); }
+            None => self.tell(&tf("Can't find {} on the network", &[&host.trim()])),
+        }
+    }
 
     /// Edge x of the outermost monitor on that side, and its floor.
     fn outer_edge(&self, side: char) -> (i32, i32, i32) {
@@ -336,42 +263,51 @@ impl App {
         let mut gifts_to_add: Vec<GiftIn> = vec![];
         let t = self.tick_n;
         // network events
-        while let Ok(e) = lan.ev.try_recv() {
+        while let Ok(e) = lan.net.ev.try_recv() {
             match e {
-                NetEv::Peer(id, name, addr) => {
+                Ev::Peer(id, name, addr) => {
                     if let Some(p) = lan.peers.iter_mut().find(|p| p.id == id) { p.addr = addr; p.name = name; p.seen = Instant::now(); }
                     else { self.lan_dbg(&format!("found {name} at {addr}")); lan.peers.push(Peer { id, name, addr, seen: Instant::now() }); }
                 }
-                NetEv::Msg(from, m) => self.lan_msg(&mut lan, from, &m),
-                NetEv::Fetched(vid, ok) => {
-                    let Some(a) = lan.arriving.remove(&vid) else { continue };
-                    if ok { self.arrive(&mut lan, vid, a); } else {
-                        self.lan_dbg(&format!("could not get {} from {}", a.pack, a.from));
-                        lan.send(a.from, format!("RETURN|{}|{vid}|{}", lan.id, opposite(a.side)));
+                Ev::Msg(from, m) => self.lan_msg(&mut lan, from, &m),
+                Ev::Fetched(xid, ok) => {
+                    if let Some(a) = lan.arriving.remove(&xid) {
+                        if ok { self.arrive(&mut lan, xid, a); } else {
+                            self.lan_dbg(&format!("could not get {} from {}", a.pack, a.from));
+                            lan.send(a.from, format!("RETURN|{}|{xid}|{}", lan.id, opposite(a.side)));
+                        }
+                    } else if let Some(pack) = lan.gift_xfers.remove(&xid) {
+                        self.lan_dbg(&format!("gift download {pack}: {ok}"));
+                        lan.gift_ok |= ok;
+                        if !lan.gift_xfers.is_empty() { continue; }
+                        let Some(g) = lan.gift_now.take() else { continue };
+                        // the answer goes out once the pets are really added (add_gift)
+                        if lan.gift_ok { gifts_to_add.push(g); } else {
+                            lan.send(g.from, format!("GIFTREPLY|{}|{}|fail", lan.id, g.gid));
+                            self.tell(&tf("Couldn't get {} from {}", &[&g.packs.join(", "), &g.origin]));
+                        }
                     }
                 }
-                NetEv::GiftAnswer(gid, yes) => {
-                    let Some(g) = lan.gift_now.as_ref().filter(|g| g.gid == gid) else { continue };
-                    if !yes {
-                        lan.send(g.from, format!("GIFTREPLY|{}|{gid}|no", lan.id));
-                        lan.gift_now = None;
-                        continue;
-                    }
-                    let (from, packs, dir) = (g.from, g.packs.clone(), gift_dir(&self.root));
-                    let tx = lan.ev_tx.clone();
-                    std::thread::spawn(move || {
-                        let ok = packs.iter().map(|p| fetch_pack(from, p, &dir.join(p)).is_ok()).fold(false, |a, b| a | b);
-                        let _ = tx.send(NetEv::GiftFetched(gid, ok));
-                    });
+                Ev::Probe(addr, ok) => {
+                    let ip = addr.ip().to_string();
+                    self.tell(&if ok { tf("{} answers: Popeto runs there with network visits on.", &[&ip]) }
+                        else { tf("No answer from {}: Popeto isn't running there, network visits are off, or a firewall or router blocks UDP port 47811.", &[&ip]) });
                 }
-                NetEv::GiftFetched(gid, ok) => {
-                    let Some(g) = lan.gift_now.take().filter(|g| g.gid == gid) else { continue };
-                    // the answer goes out once the pet is really added (add_gift)
-                    if ok { gifts_to_add.push(g); } else {
-                        lan.send(g.from, format!("GIFTREPLY|{}|{gid}|fail", lan.id));
-                        self.tell(&tf("Couldn't get {} from {}", &[&g.packs.join(", "), &g.origin]));
-                    }
-                }
+            }
+        }
+        while let Ok(Local::GiftAnswer(gid, yes)) = lan.ev.try_recv() {
+            let Some(g) = lan.gift_now.as_ref().filter(|g| g.gid == gid) else { continue };
+            if !yes {
+                lan.send(g.from, format!("GIFTREPLY|{}|{gid}|no", lan.id));
+                lan.gift_now = None;
+                continue;
+            }
+            let (from, packs, dir) = (g.from, g.packs.clone(), gift_dir(&self.root));
+            lan.gift_ok = false;
+            for p in packs {
+                let xid = (random() * 1e15) as u64 + 1;
+                lan.gift_xfers.insert(xid, p.clone());
+                lan.net.fetch(xid, from, &p, dir.join(&p));
             }
         }
         // offers: ask one at a time, when you can see it
@@ -384,7 +320,7 @@ impl App {
             };
             let (tx, gid) = (lan.ev_tx.clone(), g.gid);
             lan.gift_now = Some(g);
-            std::thread::spawn(move || { let _ = tx.send(NetEv::GiftAnswer(gid, crate::win::ask_yes_no(&q))); });
+            std::thread::spawn(move || { let _ = tx.send(Local::GiftAnswer(gid, crate::win::ask_yes_no(&q))); });
         }
         // our offers nobody answered
         let stale: Vec<u64> = lan.gifts_out.iter().filter(|(_, g)| t > g.deadline).map(|(k, _)| *k).collect();
@@ -423,7 +359,7 @@ impl App {
             match l.to {
                 Some(to) => {
                     let vid = (random() * 1e15) as u64 + 1;
-                    lan.serve.lock().unwrap().insert(pack.clone());
+                    lan.net.serve.lock().unwrap().insert(pack.clone());
                     let mine = self.settings.names.get(&pack).cloned().unwrap_or_default();
                     let msg = l.msg.as_deref().map(enc).unwrap_or_default();
                     for _ in 0..2 { lan.send(to, format!("VISIT|{}|{vid}|{}|{}|{}|{msg}", lan.id, clean(&pack), opposite(l.side), clean(&mine))); }
@@ -525,7 +461,7 @@ impl App {
         }
         for g in groups {
             let gid = (random() * 1e15) as u64 + 1;
-            { let mut s = lan.serve.lock().unwrap(); for p in &g { s.insert(p.clone()); } }
+            { let mut s = lan.net.serve.lock().unwrap(); for p in &g { s.insert(p.clone()); } }
             for _ in 0..2 { lan.send(to, format!("GIFT|{}|{gid}|{}", lan.id, g.join("/"))); }
             // they may be away from the PC: wait up to 10 minutes
             lan.gifts_out.insert(gid, GiftOut { packs: g, to, deadline: t + 40 * 60 * 10 });
@@ -537,7 +473,7 @@ impl App {
     /// A gift's files are no longer needed for download (unless the same pet is also out visiting).
     fn stop_serving_gift(&mut self, lan: &mut Lan, pack: &str) {
         let busy = lan.away.values().any(|a| a.pack == pack) || lan.gifts_out.values().any(|g| g.packs.iter().any(|p| p == pack));
-        if !busy { lan.serve.lock().unwrap().remove(pack); }
+        if !busy { lan.net.serve.lock().unwrap().remove(pack); }
     }
 
     /// Copy received pets into img\ and let a few of them walk in.
@@ -579,7 +515,7 @@ impl App {
     }
 
     fn come_home(&mut self, lan: &mut Lan, a: Away, side: char) {
-        lan.serve.lock().unwrap().remove(&a.pack);
+        lan.net.serve.lock().unwrap().remove(&a.pack);
         if let Some(pk) = self.pack_index(&a.pack) {
             let Some(id) = self.walk_in(pk, side) else { return };
             match &a.msg {
@@ -607,9 +543,8 @@ impl App {
                 // fetch the pet first
                 self.lan_dbg(&format!("fetching {pack} from {from}"));
                 let dest = self.root.join("visitors").join(&pack);
-                let tx = lan.ev_tx.clone();
                 lan.arriving.insert(vid, a);
-                std::thread::spawn(move || { let ok = fetch_pack(from, &pack, &dest).is_ok(); let _ = tx.send(NetEv::Fetched(vid, ok)); });
+                lan.net.fetch(vid, from, &pack, dest);
             }
             "GIFT" if m.len() >= 4 => {
                 if !lan.seen_vids.insert(vid) { return; }

@@ -18,7 +18,7 @@ fn conf_files(dir: &Path) -> Vec<PathBuf> {
     ["actions.xml", "behaviors.xml", "動作.xml", "行動.xml"].iter().map(|f| dir.join(f)).filter(|p| p.is_file()).collect()
 }
 
-fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     fs::create_dir_all(to)?;
     for e in fs::read_dir(from)?.flatten() {
         let p = e.path();

@@ -44,6 +44,7 @@ pub const CMD_BED: usize = 67;
 pub const CMD_TOYS_CLEAR: usize = 68;
 pub const CMD_LASER: usize = 69;
 pub const CMD_CHALK: usize = 100;
+pub const CMD_LAN_TEST: usize = 140;
 
 // raw control constants (kept local; they are stable Win32 values)
 const BS_AUTOCHECKBOX: u32 = 3;
@@ -101,7 +102,7 @@ unsafe extern "system" fn proc_(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
                 ID_OK => push(Ev::SettingsApply(true)),
                 ID_APPLY => push(Ev::SettingsApply(false)),
                 ID_CANCEL => { close(); }
-                CMD_PETS_FOLDER | CMD_CHOOSE | CMD_ADD_PETS | CMD_PRANKS_FOLDER | CMD_BALL | CMD_COOKIE | CMD_BALLOON | CMD_BED | CMD_TOYS_CLEAR | CMD_LASER | CMD_CHALK => push(Ev::Command(id)),
+                CMD_PETS_FOLDER | CMD_CHOOSE | CMD_ADD_PETS | CMD_PRANKS_FOLDER | CMD_BALL | CMD_COOKIE | CMD_BALLOON | CMD_BED | CMD_TOYS_CLEAR | CMD_LASER | CMD_CHALK | CMD_LAN_TEST => push(Ev::Command(id)),
                 _ => {}
             }
             return 0;
@@ -365,8 +366,12 @@ pub fn open(s: &Settings, icon: HICON) {
         b.note(t("Empty = the computer name."), 1);
         b.edit(t("Other PCs (addresses)"), F::LanPeers, &n.peers.join(", "), false);
         b.note(t("Only needed if they aren't found automatically, e.g. 192.168.1.20, office-pc. Comma separated."), 2);
-        b.gap(4);
-        b.note(t("Visiting pets that you don't have are sent over the network for the visit (kept in the visitors folder). Uses port 47811; Windows may ask to allow Popeto in the firewall. Right click a pet > Go visiting."), 4);
+        let mine: Vec<String> = crate::net::local_ipv4().iter().map(|(ip, _)| ip.to_string()).collect();
+        b.note(&tf("This PC: {}", &[&if mine.is_empty() { "-".to_string() } else { mine.join(", ") }]), 1);
+        let hw = (b.w - px(sc, 10)) / 2;
+        b.button(t("Test a PC..."), CMD_LAN_TEST, b.x0, hw);
+        b.gap(36);
+        b.note(t("Pets that the other PC doesn't have are sent for the visit (kept in the visitors folder). Uses UDP port 47811. PCs in another subnet: enter the address on one side, the other answers by itself."), 3);
         let network = b.finish_page(top);
 
         // --- Windows

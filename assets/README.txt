@@ -76,8 +76,10 @@ LAN visits (Settings > Network, off by default)
   Pets walk off your screen to another PC running Popeto on the same network, stay a few minutes and
   come back. Right click a pet > Go visiting, or let them go by themselves. If the other PC doesn't have
   that pet, it is sent over the network for the visit (visitors folder); right click a guest > Keep a copy.
-  Uses port 47811 (UDP + TCP); Windows may ask to allow Popeto in the firewall. If PCs don't find each
-  other (office networks), type their addresses in Settings > Network.
+  Right click a pet > Send with a message / Give a copy to; tray > Give pets to (several at once).
+  Uses UDP port 47811 only; Windows may ask to allow Popeto in the firewall. If PCs don't find each
+  other (another subnet, office networks), type the other PC's address in Settings > Network on one
+  side: it answers by itself. Settings > Network > Test a PC checks whether Popeto answers there.
 
 Panic key (default Ctrl+Shift+F12, PanicKey= in popeto.ini): hides every pet and stops all pranks;
 press again to bring them back. No keyboard/mouse hooks are used.

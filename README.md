@@ -38,8 +38,11 @@ no installer. Copy the folder anywhere and run `Popeto.exe` (~1 MB, ~15 MB RAM).
   doodles, pet names shown on mouse over. Scripts can talk through pets: `Popeto.exe --say "Build done"`,
   `Popeto.exe --note "text"`.
 - **LAN visits** (off by default): pets walk off your screen and visit other PCs running Popeto on the same
-  network, then come back. Discovery by UDP broadcast on port 47811 (or listed addresses); a pet the other PC
-  doesn't have is sent as a zip over TCP for the visit (`visitors\`, images/xml/wav only, only while visiting).
+  network, then come back. Everything runs over one UDP port, 47811: PCs find each other by broadcast (also
+  per network card, so a VPN doesn't hide the LAN), answer direct hellos, and share the addresses they know, so
+  for another subnet one listed address on one side is enough. A pet the other PC doesn't have is sent as a zip
+  in numbered pieces the receiver asks for (`visitors\`, images/xml/wav only, only while visiting or given).
+  Settings > Network shows this PC's address and can test whether a PC answers.
   Right click a pet > **Send with a message**: it carries your note (up to 300 characters) onto the other screen.
   Right click a pet > **Give a copy to** > PC, or tray > **Give pets to** > PC to pick several: that PC is asked once,
   and on yes the pets are added to its pets for good (ones it already has are skipped).
@@ -121,7 +124,7 @@ them with **tray > Add pets from Shimeji zip...**
 | `src/importer.rs` | Shimeji zip/folder importer |
 | `src/extras.rs` | Reminders, timer, `--say`, dancing, laser, chalk, name tags |
 | `src/audio.rs`, `src/icons.rs` | Speaker peak meter, desktop icon positions (COM) |
-| `src/lan.rs` | LAN visits |
+| `src/lan.rs`, `src/net.rs` | LAN visits, gifts, messages; UDP discovery and pet transfer |
 | `src/i18n.rs` | UI translations |
 
 ## Credits
